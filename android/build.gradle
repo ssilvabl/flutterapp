@@ -13,6 +13,32 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Workaround: assign a default namespace to Android library subprojects that don't declare one
+// This helps with 3rd-party plugins (e.g., older versions of share_plus) that haven't migrated
+gradle.projectsEvaluated {
+    subprojects { proj ->
+        try {
+            proj.plugins.withId('com.android.library') {
+                def androidExt = proj.extensions.findByName('android')
+                if (androidExt != null) {
+                    try {
+                        def ns = null
+                        try { ns = androidExt.namespace } catch (e) { ns = null }
+                        if (ns == null || ns.toString().trim() == '') {
+                            // set a safe namespace using the project name
+                            androidExt.namespace = "com.example.${proj.name}"
+                        }
+                    } catch (ignored) {
+                        // ignore
+                    }
+                }
+            }
+        } catch (ignored) {
+            // If anything fails, ignore
+        }
+    }
+}
+
 tasks.register("clean", Delete) {
     delete rootProject.buildDir
 }

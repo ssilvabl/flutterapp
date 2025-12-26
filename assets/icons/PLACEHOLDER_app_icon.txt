@@ -1,0 +1,14 @@
+# IMPORTANTE: Reemplaza este archivo
+
+Este es un archivo placeholder. 
+
+**Debes reemplazar este archivo con la imagen del ícono de la app** (el archivo PNG con el símbolo de dólar y engranaje que te proporcioné).
+
+1. Guarda la imagen del ícono como `app_icon.png` en esta carpeta
+2. Asegúrate de que sea una imagen cuadrada (1024x1024 píxeles recomendado)
+3. Ejecuta: `flutter pub get`
+4. Ejecuta: `flutter pub run flutter_launcher_icons`
+5. Limpia y reconstruye: `flutter clean && flutter build apk`
+
+El archivo debe estar ubicado en:
+`assets/icons/app_icon.png`

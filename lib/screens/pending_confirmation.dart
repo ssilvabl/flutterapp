@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../utils/error_messages.dart';
+import 'payments_list.dart';
 
 class PendingConfirmationPage extends StatefulWidget {
   final String email;
@@ -21,7 +23,7 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
   @override
   void initState() {
     super.initState();
-    // Optionally poll every few seconds to see if the user can login now
+    // Poll every few seconds to see if the user can login now
     _timer = Timer.periodic(const Duration(seconds: 5), (_) => _tryRefresh());
   }
 
@@ -31,11 +33,14 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
         email: widget.email,
         password: widget.password,
       );
-      if (signInRes.session != null || signInRes.user != null) {
+      final ok = signInRes.user != null || signInRes.session != null;
+      if (ok) {
         _timer?.cancel();
         if (!mounted) return;
-        // navigate to root to let AuthGate decide
-        Navigator.of(context).pushReplacementNamed('/');
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+          (route) => false,
+        );
       }
     } catch (_) {
       // ignore network errors during polling
@@ -57,7 +62,8 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Se reenvió el correo de confirmación')));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      final msg = friendlySupabaseMessage(e, fallback: 'No se pudo reenviar el correo');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -73,13 +79,17 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
       final ok = res.user != null || res.session != null;
       if (!mounted) return;
       if (ok) {
-        Navigator.of(context).pushReplacementNamed('/');
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+          (route) => false,
+        );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Aún no está confirmada la cuenta')));
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      final msg = friendlySupabaseMessage(e, fallback: 'No se pudo iniciar sesión');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } finally {
       if (mounted) setState(() => _loading = false);
     }
