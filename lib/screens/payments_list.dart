@@ -1146,14 +1146,28 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              IconButton(
-                iconSize: 56,
-                onPressed: _canAddTransactions ? () => _showEditDialog() : null,
-                icon: CircleAvatar(
-                  backgroundColor: _canAddTransactions ? null : Colors.grey,
-                  child: Icon(
-                    Icons.add,
-                    color: _canAddTransactions ? null : Colors.white54,
+              Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  onTap: _canAddTransactions ? () => _showEditDialog() : null,
+                  borderRadius: BorderRadius.circular(28),
+                  child: Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: _canAddTransactions 
+                        ? const LinearGradient(
+                            colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
+                          )
+                        : null,
+                      color: _canAddTransactions ? null : Colors.grey,
+                    ),
+                    child: Icon(
+                      Icons.add,
+                      color: Colors.white,
+                      size: 28,
+                    ),
                   ),
                 ),
               ),
@@ -1263,10 +1277,30 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         const SizedBox(height: 12),
         Row(
           children: [
-            IconButton(
-              iconSize: 52,
-              onPressed: () => _showEditDialog(),
-              icon: const CircleAvatar(child: Icon(Icons.add)),
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _canAddTransactions ? () => _showEditDialog() : null,
+                borderRadius: BorderRadius.circular(26),
+                child: Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: _canAddTransactions 
+                      ? const LinearGradient(
+                          colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
+                        )
+                      : null,
+                    color: _canAddTransactions ? null : Colors.grey,
+                  ),
+                  child: const Icon(
+                    Icons.add,
+                    color: Colors.white,
+                    size: 26,
+                  ),
+                ),
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(
