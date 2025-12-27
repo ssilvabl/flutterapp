@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/error_messages.dart';
-import 'payments_list.dart';
+import '../utils/session_manager.dart';
+import 'preference_selection.dart';
 
 class PendingConfirmationPage extends StatefulWidget {
   final String email;
@@ -36,9 +37,13 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
       final ok = signInRes.user != null || signInRes.session != null;
       if (ok) {
         _timer?.cancel();
+        
+        // Crear sesión para el nuevo usuario
+        await SessionManager.createSession();
+        
         if (!mounted) return;
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+          MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
           (route) => false,
         );
       }
@@ -80,7 +85,7 @@ class _PendingConfirmationPageState extends State<PendingConfirmationPage> {
       if (!mounted) return;
       if (ok) {
         Navigator.of(context).pushAndRemoveUntil(
-          MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+          MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
           (route) => false,
         );
       } else {

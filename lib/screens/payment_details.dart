@@ -83,7 +83,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
         .listen((data) {
       if (!mounted) return;
       setState(() {
-        _moves = data.map((e) => Movement.fromMap(e as Map<String, dynamic>)).toList();
+        _moves = data.map((e) => Movement.fromMap(e)).toList();
       });
     });
   }
@@ -106,8 +106,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     pdf.addPage(pw.MultiPage(
       build: (pw.Context ctx) => [
         pw.Header(level: 0, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-          if (profile.isNotEmpty) pw.Text(profile, style: pw.TextStyle(fontSize: 18)),
-          pw.Text(entity, style: pw.TextStyle(fontSize: 16)),
+          if (profile.isNotEmpty) pw.Text(profile, style: const pw.TextStyle(fontSize: 18)),
+          pw.Text(entity, style: const pw.TextStyle(fontSize: 16)),
         ])),
         pw.SizedBox(height: 6),
         pw.Paragraph(text: 'Monto Actual: \$${_formatAmount(amountVal)}'),
@@ -133,13 +133,93 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       ],
     ));
 
-    await Printing.sharePdf(bytes: await pdf.save(), filename: 'factura_${entity}.pdf');
+    await Printing.sharePdf(bytes: await pdf.save(), filename: 'factura_$entity.pdf');
+  }
+
+  Future<void> _confirmDelete() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirmar eliminación'),
+        content: Text('¿Estás seguro de que deseas eliminar "${widget.payment['entity']}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await _deletePayment();
+    }
+  }
+
+  Future<void> _deletePayment() async {
+    setState(() => _loading = true);
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      final paymentId = widget.payment['id']?.toString();
+      
+      if (userId == null || paymentId == null) {
+        throw Exception('No autorizado');
+      }
+
+      await _supabase
+          .from('payments')
+          .delete()
+          .eq('id', paymentId)
+          .eq('user_id', userId);
+
+      if (!mounted) return;
+      
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pago eliminado exitosamente')),
+      );
+
+      // Volver a la pantalla anterior
+      Navigator.of(context).pop(true);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al eliminar: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.payment['entity']?.toString() ?? ''), actions: [IconButton(icon: const Icon(Icons.picture_as_pdf), onPressed: _sharePdf)],),
+      appBar: AppBar(
+        title: Text(widget.payment['entity']?.toString() ?? ''),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit),
+            onPressed: () {
+              Navigator.of(context).pop({'action': 'edit', 'payment': widget.payment});
+            },
+            tooltip: 'Editar',
+          ),
+          IconButton(
+            icon: const Icon(Icons.delete),
+            onPressed: _confirmDelete,
+            tooltip: 'Eliminar',
+          ),
+          IconButton(
+            icon: const Icon(Icons.picture_as_pdf),
+            onPressed: _sharePdf,
+            tooltip: 'Exportar PDF',
+          ),
+        ],
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

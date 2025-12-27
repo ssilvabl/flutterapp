@@ -5,6 +5,8 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import '../utils/error_messages.dart';
 import '../utils/session_manager.dart';
+import '../utils/interface_labels.dart';
+import '../utils/preference_provider.dart';
 import '../constants/user_roles.dart';
 import 'login.dart';
 import 'payment_details.dart';
@@ -69,6 +71,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   double _totalCobros = 0.0;
   double _totalPagos = 0.0;
   int _totalCount = 0;
+  bool _hasMoreItems = true;
 
   StreamSubscription<List<Map<String, dynamic>>>? _paymentsSub;
   String? _profileName;
@@ -76,6 +79,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   bool _canAddTransactions = true;
   int _currentTransactionCount = 0;
   int? _maxTransactions;
+  Timer? _sessionCheckTimer;
+
+  // Removemos estas variables ya que usaremos el provider
+  // InterfacePreference _interfacePreference = InterfacePreference.prestamista;
+  // InterfaceLabels get _labels => InterfaceLabels(_interfacePreference);
 
   @override
   void initState() {
@@ -92,6 +100,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     _fetch();
     _loadProfile();
     _loadUserRole();
+    _startSessionValidation();
     if (_userId != null) {
       _paymentsSub = _supabase
           .from('payments')
@@ -133,6 +142,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           ? List<Map<String, dynamic>>.from(res)
           : <Map<String, dynamic>>[];
       final items = data.map((e) => Payment.fromMap(e)).toList();
+      
+      // Detectar si hay más items disponibles
+      _hasMoreItems = items.length >= _pageSize;
+      
       if (next) {
         // Append only items that are not already present to avoid duplicates
         final existingIds = _items.map((e) => e.id).toSet();
@@ -143,6 +156,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         // Replace on fresh load
         setState(() => _items = items);
       }
+      
+      // Aplicar filtros después de actualizar items
+      _applyFilter();
     } catch (e) {
       if (!mounted) return;
       final msg =
@@ -155,6 +171,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   @override
   void dispose() {
+    _sessionCheckTimer?.cancel();
     _paymentsSub?.cancel();
     _searchController.dispose();
     super.dispose();
@@ -167,7 +184,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       final res =
           await _supabase.from('profiles').select().eq('id', uid).maybeSingle();
       if (res != null) {
-        setState(() => _profileName = res['company'] ?? res['full_name']);
+        setState(() {
+          _profileName = res['company'] ?? res['full_name'];
+        });
       }
     } catch (_) {}
   }
@@ -207,6 +226,45 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     } catch (e) {
       print('Error checking transaction limit: $e');
     }
+  }
+
+  /// Inicia la verificación periódica de validez de sesión
+  void _startSessionValidation() {
+    // Verificar cada 30 segundos si la sesión sigue siendo válida
+    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+
+      final isValid = await SessionManager.isSessionValid();
+      if (!isValid) {
+        // La sesión fue eliminada desde otro dispositivo
+        timer.cancel();
+        await _handleSessionInvalidated();
+      }
+    });
+  }
+
+  /// Maneja cuando la sesión ha sido invalidada desde otro dispositivo
+  Future<void> _handleSessionInvalidated() async {
+    // Cerrar sesión localmente
+    await Supabase.instance.client.auth.signOut();
+    
+    if (!mounted) return;
+    
+    // Mostrar mensaje y redirigir al login
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginPage()),
+      (route) => false,
+    );
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Tu sesión ha sido cerrada desde otro dispositivo'),
+        duration: Duration(seconds: 5),
+      ),
+    );
   }
 
   Future<void> _delete(String id) async {
@@ -250,6 +308,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   }
 
   Future<void> _showEditDialog({Payment? p}) async {
+    // Obtener labels del provider
+    final preferenceProvider = PreferenceInheritedWidget.of(context);
+    final labels = preferenceProvider?.labels ?? InterfaceLabels(InterfacePreference.prestamista);
     final entityCtrl = TextEditingController(text: p?.entity ?? '');
     // For creation: amountCtrl = absolute amount; for edit: amountCtrl = delta to apply
     final amountCtrl = TextEditingController(text: p == null ? '' : '');
@@ -268,7 +329,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       context: context,
       builder: (_) => StatefulBuilder(builder: (context, setStateDialog) {
         return AlertDialog(
-          title: Text(p == null ? 'Agregar pago' : 'Editar pago'),
+          title: Text(p == null 
+            ? (type == 'cobro' ? 'Agregar ${labels.cobro}' : 'Agregar ${labels.pago}')
+            : (type == 'cobro' ? 'Editar ${labels.cobro}' : 'Editar ${labels.pago}')),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -383,9 +446,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                   const SizedBox(height: 8),
                   DropdownButtonFormField<String>(
                     value: type,
-                    items: const [
-                      DropdownMenuItem(value: 'cobro', child: Text('Cobro')),
-                      DropdownMenuItem(value: 'pago', child: Text('Pago')),
+                    items: [
+                      DropdownMenuItem(value: 'cobro', child: Text(labels.cobro)),
+                      DropdownMenuItem(value: 'pago', child: Text(labels.pago)),
                     ],
                     onChanged: (v) => type = v ?? 'cobro',
                     decoration: const InputDecoration(labelText: 'Tipo'),
@@ -457,15 +520,12 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     );
 
     if (result == true) {
-      // Si hay suscripción realtime, esta actualizará la lista automáticamente.
-      // Solo recargamos manualmente si no tenemos suscripción (fallback).
-      if (_paymentsSub == null) {
-        setState(() {
-          _items = [];
-          _page = 0;
-        });
-        await _fetch();
-      }
+      // Siempre recargar para asegurar actualización inmediata
+      setState(() {
+        _items = [];
+        _page = 0;
+      });
+      await _fetch();
       
       // Actualizar el límite de transacciones después de agregar/editar
       await _checkTransactionLimit();
@@ -477,6 +537,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     setState(() => _loading = true);
     try {
       if (_userId == null) throw Exception('No autorizado');
+      final now = DateTime.now();
       final res = await _supabase.from('payments').insert({
         'entity_name': entity,
         'amount': amount,
@@ -484,6 +545,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         'end_date': endDate?.toIso8601String(),
         'type': type,
         'description': description,
+        'created_at': now.toIso8601String(),
       }).select();
 
       // If insertion succeeded, create an initial movement record
@@ -497,13 +559,17 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             'movement_type': 'initial',
             'amount': amount,
             'note': 'Monto inicial',
+            'created_at': now.toIso8601String(),
           });
         }
       }
 
       if (mounted) {
+        final labels = PreferenceInheritedWidget.watch(context).labels;
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Pago agregado')));
+            .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} agregado' : '${labels.pago} agregado')));
+        // Recargar datos para actualizar la vista
+        await _fetch();
       }
     } catch (e) {
       if (!mounted) return;
@@ -559,12 +625,16 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           'movement_type': movementType,
           'amount': delta.abs(),
           'note': 'Ajuste manual',
+          'created_at': DateTime.now().toIso8601String(),
         });
       }
 
       if (mounted) {
+        final labels = PreferenceInheritedWidget.watch(context).labels;
         ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('Pago actualizado')));
+            .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} actualizado' : '${labels.pago} actualizado')));
+        // Recargar datos para actualizar la vista
+        await _fetch();
       }
       _applyFilter();
     } catch (e) {
@@ -579,9 +649,13 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Obtener labels del provider
+    final preferenceProvider = PreferenceInheritedWidget.watch(context);
+    final labels = preferenceProvider.labels;
+    
     return Scaffold(
       appBar: AppBar(
-          title: const Text('Lista de Pagos / Cobros'),
+          title: Text('Lista de ${labels.pagos} / ${labels.cobros}'),
           automaticallyImplyLeading: true),
       drawer: Drawer(
         child: Column(
@@ -634,7 +708,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           children: [
             LayoutBuilder(builder: (context, constraints) {
               final wide = constraints.maxWidth >= 700;
-              return _buildTopControls(wide, constraints.maxWidth);
+              return _buildTopControls(wide, constraints.maxWidth, labels);
             }),
             const SizedBox(height: 8),
             Expanded(
@@ -680,13 +754,36 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                 CrossAxisAlignment.start,
                                             children: [
                                               Expanded(
-                                                child: Text(
-                                                  it.entity,
-                                                  style: const TextStyle(
-                                                      color: Colors.white),
-                                                  maxLines: 2,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
+                                                child: GestureDetector(
+                                                  onTap: () async {
+                                                    final result = await Navigator.of(context)
+                                                        .push(MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                PaymentDetailsPage(
+                                                                    payment: {
+                                                                      'id': it.id,
+                                                                      'entity': it.entity,
+                                                                      'amount': it.amount,
+                                                                      'createdAt':
+                                                                          it.createdAt,
+                                                                      'endDate':
+                                                                          it.endDate,
+                                                                      'description':
+                                                                          it.description,
+                                                                    })));
+                                                    if (result != null && result['action'] == 'edit') {
+                                                      await _showEditDialog(p: it);
+                                                    }
+                                                  },
+                                                  child: Text(
+                                                    it.entity,
+                                                    style: const TextStyle(
+                                                        color: Colors.white,
+                                                        decoration: TextDecoration.underline),
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
                                                 ),
                                               ),
                                               const SizedBox(width: 8),
@@ -730,13 +827,36 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                   crossAxisAlignment:
                                                       CrossAxisAlignment.start,
                                                   children: [
-                                                    Text(it.entity,
-                                                        style: const TextStyle(
-                                                            color:
-                                                                Colors.white),
-                                                        maxLines: 2,
-                                                        overflow: TextOverflow
-                                                            .ellipsis),
+                                                    GestureDetector(
+                                                      onTap: () async {
+                                                        final result = await Navigator.of(context)
+                                                            .push(MaterialPageRoute(
+                                                                builder: (_) =>
+                                                                    PaymentDetailsPage(
+                                                                        payment: {
+                                                                          'id': it.id,
+                                                                          'entity': it.entity,
+                                                                          'amount': it.amount,
+                                                                          'createdAt':
+                                                                              it.createdAt,
+                                                                          'endDate':
+                                                                              it.endDate,
+                                                                          'description':
+                                                                              it.description,
+                                                                        })));
+                                                        if (result != null && result['action'] == 'edit') {
+                                                          await _showEditDialog(p: it);
+                                                        }
+                                                      },
+                                                      child: Text(it.entity,
+                                                          style: const TextStyle(
+                                                              color:
+                                                                  Colors.white,
+                                                              decoration: TextDecoration.underline),
+                                                          maxLines: 2,
+                                                          overflow: TextOverflow
+                                                              .ellipsis),
+                                                    ),
                                                     if (it.endDate != null)
                                                       Text(
                                                           'Vence: ${_formatDate(it.endDate!)}',
@@ -783,7 +903,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                           return;
                                         }
                                         if (v == 'details') {
-                                          Navigator.of(context).push(
+                                          final result = await Navigator.of(context).push(
                                               MaterialPageRoute(
                                                   builder: (_) =>
                                                       PaymentDetailsPage(
@@ -798,6 +918,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                             'description':
                                                                 it.description,
                                                           })));
+                                          if (result != null && result['action'] == 'edit') {
+                                            await _showEditDialog(p: it);
+                                          }
                                           return;
                                         }
                                       },
@@ -833,21 +956,26 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                           icon: const Icon(Icons.info_outline,
                                               color: Colors.blue, size: 28),
                                           tooltip: 'Detalles',
-                                          onPressed: () => Navigator.of(context)
-                                              .push(MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      PaymentDetailsPage(
-                                                          payment: {
-                                                            'id': it.id,
-                                                            'entity': it.entity,
-                                                            'amount': it.amount,
-                                                            'createdAt':
-                                                                it.createdAt,
-                                                            'endDate':
-                                                                it.endDate,
-                                                            'description':
-                                                                it.description,
-                                                          }))),
+                                          onPressed: () async {
+                                            final result = await Navigator.of(context)
+                                                .push(MaterialPageRoute(
+                                                    builder: (_) =>
+                                                        PaymentDetailsPage(
+                                                            payment: {
+                                                              'id': it.id,
+                                                              'entity': it.entity,
+                                                              'amount': it.amount,
+                                                              'createdAt':
+                                                                  it.createdAt,
+                                                              'endDate':
+                                                                  it.endDate,
+                                                              'description':
+                                                                  it.description,
+                                                            })));
+                                            if (result != null && result['action'] == 'edit') {
+                                              await _showEditDialog(p: it);
+                                            }
+                                          },
                                         ),
                                         const SizedBox(width: 8),
                                         ElevatedButton.icon(
@@ -878,7 +1006,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             ),
             if (_loading) const CircularProgressIndicator(),
             const SizedBox(height: 12),
-            _searchController.text.trim().isEmpty
+            _searchController.text.trim().isEmpty && _hasMoreItems && _items.length >= _pageSize
                 ? ElevatedButton(
                     onPressed: _loading ? null : () => _fetch(next: true),
                     child: const Text('Ver Más'),
@@ -942,10 +1070,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         if (_userId == null) return;
         setState(() => _loading = true);
         final escaped = q.replaceAll('%', '\\%');
+        // Búsqueda case-insensitive en nombre y descripción
         final res = await _supabase
             .from('payments')
             .select()
-            .or("entity_name.ilike.%$escaped% , description.ilike.%$escaped%")
+            .or("entity_name.ilike.%$escaped%,description.ilike.%$escaped%")
             .eq('user_id', _userId)
             .order('created_at', ascending: false);
         final List<Map<String, dynamic>> data = (res is List)
@@ -986,7 +1115,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     if (mounted) setState(() {});
   }
 
-  Widget _buildTopControls(bool wide, double maxWidth) {
+  Widget _buildTopControls(bool wide, double maxWidth, InterfaceLabels labels) {
     if (wide) {
       return Row(
         children: [
@@ -1071,7 +1200,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 },
               ),
               ChoiceChip(
-                label: const Text('Cobros'),
+                label: Text(labels.cobros),
                 selected: _filterType == 'cobro',
                 onSelected: (_) {
                   setState(() => _filterType = 'cobro');
@@ -1079,7 +1208,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 },
               ),
               ChoiceChip(
-                label: const Text('Pagos'),
+                label: Text(labels.pagos),
                 selected: _filterType == 'pago',
                 onSelected: (_) {
                   setState(() => _filterType = 'pago');
@@ -1152,14 +1281,14 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                         _applyFilter();
                       }),
                   ChoiceChip(
-                      label: const Text('Cobros'),
+                      label: Text(labels.cobros),
                       selected: _filterType == 'cobro',
                       onSelected: (_) {
                         setState(() => _filterType = 'cobro');
                         _applyFilter();
                       }),
                   ChoiceChip(
-                      label: const Text('Pagos'),
+                      label: Text(labels.pagos),
                       selected: _filterType == 'pago',
                       onSelected: (_) {
                         setState(() => _filterType = 'pago');
@@ -1271,9 +1400,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
                     if (profile.isNotEmpty)
-                      pw.Text(profile, style: pw.TextStyle(fontSize: 18)),
+                      pw.Text(profile, style: const pw.TextStyle(fontSize: 18)),
                     pw.Text('Factura - ${p.entity}',
-                        style: pw.TextStyle(fontSize: 16)),
+                        style: const pw.TextStyle(fontSize: 16)),
                   ])));
 
           content.add(pw.SizedBox(height: 6));

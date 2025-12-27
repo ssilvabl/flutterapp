@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import '../utils/error_messages.dart';
+import '../utils/preference_provider.dart';
 
 class StatisticsPage extends StatefulWidget {
   const StatisticsPage({super.key});
@@ -18,6 +19,9 @@ class _StatisticsPageState extends State<StatisticsPage> {
   double _totalPagos = 0.0;
   DateTime _startDate = DateTime.now().subtract(const Duration(days: 30));
   DateTime _endDate = DateTime.now();
+  // Removemos estas variables ya que usaremos el provider
+  // InterfacePreference _interfacePreference = InterfacePreference.prestamista;
+  // InterfaceLabels get _labels => InterfaceLabels(_interfacePreference);
 
   @override
   void initState() {
@@ -111,11 +115,17 @@ class _StatisticsPageState extends State<StatisticsPage> {
   }
 
   @override
+  @override
   Widget build(BuildContext context) {
+    // Obtener labels del provider
+    final preferenceProvider = PreferenceInheritedWidget.watch(context);
+    final labels = preferenceProvider.labels;
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text('Estadísticas'),
         backgroundColor: const Color(0xFF1F2323),
+        iconTheme: const IconThemeData(color: Colors.white),
         actions: [
           IconButton(
             icon: const Icon(Icons.date_range),
@@ -230,19 +240,20 @@ class _StatisticsPageState extends State<StatisticsPage> {
                           bottomTitles: AxisTitles(
                             sideTitles: SideTitles(
                               showTitles: true,
+                              reservedSize: 40,
                               getTitlesWidget: (value, meta) {
                                 if (value == 0) {
-                                  return const Padding(
-                                    padding: EdgeInsets.only(top: 8.0),
-                                    child: Text('Cobros',
-                                        style: TextStyle(
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Text(labels.cobros,
+                                        style: const TextStyle(
                                             fontWeight: FontWeight.bold)),
                                   );
                                 } else if (value == 1) {
-                                  return const Padding(
-                                    padding: EdgeInsets.only(top: 8.0),
-                                    child: Text('Pagos',
-                                        style: TextStyle(
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 8.0),
+                                    child: Text(labels.pagos,
+                                        style: const TextStyle(
                                             fontWeight: FontWeight.bold)),
                                   );
                                 }

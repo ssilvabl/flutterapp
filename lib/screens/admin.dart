@@ -19,6 +19,7 @@ class UserInfo {
   final DateTime createdAt;
   final int totalPayments;
   final int totalCollections;
+  final int activeSessions;
 
   UserInfo({
     required this.id,
@@ -29,6 +30,7 @@ class UserInfo {
     required this.createdAt,
     required this.totalPayments,
     required this.totalCollections,
+    required this.activeSessions,
   });
 }
 
@@ -76,6 +78,13 @@ class _AdminPageState extends State<AdminPage> {
         final totalCollections =
             payments.where((p) => p['type'] == 'cobro').length;
 
+        // Contar sesiones activas
+        final sessionsRes = await _supabase
+            .from('user_sessions')
+            .select('id')
+            .eq('user_id', userId);
+        final activeSessions = (sessionsRes as List).length;
+
         usersList.add(UserInfo(
           id: userId,
           email: email,
@@ -87,6 +96,7 @@ class _AdminPageState extends State<AdminPage> {
               : DateTime.now(),
           totalPayments: totalPayments,
           totalCollections: totalCollections,
+          activeSessions: activeSessions,
         ));
       }
 
@@ -220,6 +230,132 @@ class _AdminPageState extends State<AdminPage> {
     }
   }
 
+  Future<void> _closeAllSessions(UserInfo user) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cerrar todas las sesiones'),
+        content: Text(
+            '¿Cerrar todas las sesiones activas de ${user.fullName ?? user.email}?\n\nEl usuario será desconectado de todos sus dispositivos.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Cerrar todas'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    try {
+      await _supabase
+          .from('user_sessions')
+          .delete()
+          .eq('user_id', user.id);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sesiones cerradas exitosamente')),
+      );
+
+      await _loadUsers();
+    } catch (e) {
+      if (!mounted) return;
+      final msg = friendlySupabaseMessage(e,
+          fallback: 'Error al cerrar sesiones');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _showSessionsDialog(UserInfo user) async {
+    if (user.activeSessions == 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El usuario no tiene sesiones activas')),
+      );
+      return;
+    }
+
+    // Obtener todas las sesiones del usuario
+    final sessionsRes = await _supabase
+        .from('user_sessions')
+        .select()
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false);
+
+    final sessions = List<Map<String, dynamic>>.from(sessionsRes);
+
+    if (!mounted) return;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Sesiones de ${user.fullName ?? user.email}'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: sessions.length,
+            itemBuilder: (context, index) {
+              final session = sessions[index];
+              final device = session['device_info'] as String? ?? 'Dispositivo desconocido';
+              final createdAt = session['created_at'] != null
+                  ? DateTime.parse(session['created_at'] as String)
+                  : null;
+
+              return Card(
+                child: ListTile(
+                  leading: const Icon(Icons.devices),
+                  title: Text(device),
+                  subtitle: createdAt != null
+                      ? Text(
+                          'Iniciada: ${createdAt.day}/${createdAt.month}/${createdAt.year} ${createdAt.hour}:${createdAt.minute.toString().padLeft(2, '0')}')
+                      : null,
+                  trailing: IconButton(
+                    icon: const Icon(Icons.close, color: Colors.red),
+                    onPressed: () async {
+                      try {
+                        await _supabase
+                            .from('user_sessions')
+                            .delete()
+                            .eq('id', session['id']);
+
+                        if (!mounted) return;
+                        Navigator.of(ctx).pop();
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                              content: Text('Sesión cerrada exitosamente')),
+                        );
+                        await _loadUsers();
+                      } catch (e) {
+                        if (!mounted) return;
+                        final msg = friendlySupabaseMessage(e,
+                            fallback: 'Error al cerrar sesión');
+                        ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text(msg)));
+                      }
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showActionsMenu(UserInfo user) {
     showModalBottomSheet(
       context: context,
@@ -243,6 +379,26 @@ class _AdminPageState extends State<AdminPage> {
                 _changeUserRole(user);
               },
             ),
+            if (user.activeSessions > 0) ...[
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.devices_other),
+                title: const Text('Ver sesiones por dispositivo'),
+                subtitle: Text('${user.activeSessions} sesión(es) activa(s)'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showSessionsDialog(user);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.logout, color: Colors.red),
+                title: const Text('Cerrar todas las sesiones'),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _closeAllSessions(user);
+                },
+              ),
+            ],
           ],
         ),
       ),
@@ -255,6 +411,7 @@ class _AdminPageState extends State<AdminPage> {
       appBar: AppBar(
         title: const Text('Administración'),
         backgroundColor: const Color(0xFF1F2323),
+        iconTheme: const IconThemeData(color: Colors.white),
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
@@ -277,18 +434,24 @@ class _AdminPageState extends State<AdminPage> {
                               fontSize: 24, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(height: 16),
-                        SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: DataTable(
-                            columns: const [
-                              DataColumn(label: Text('Usuario')),
-                              DataColumn(label: Text('Email')),
-                              DataColumn(label: Text('Rol')),
-                              DataColumn(label: Text('Registro')),
-                              DataColumn(label: Text('Pagos')),
-                              DataColumn(label: Text('Cobros')),
-                              DataColumn(label: Text('Acciones')),
-                            ],
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: DataTable(
+                              columns: const [
+                                DataColumn(label: Text('Usuario')),
+                                DataColumn(label: Text('Email')),
+                                DataColumn(label: Text('Rol')),
+                                DataColumn(label: Text('Registro')),
+                                DataColumn(label: Text('Pagos')),
+                                DataColumn(label: Text('Cobros')),
+                                DataColumn(label: Text('Sesiones')),
+                                DataColumn(label: Text('Acciones')),
+                              ],
                             rows: _users.map((user) {
                               final roleColor = user.role == 'admin'
                                   ? Colors.red
@@ -365,6 +528,40 @@ class _AdminPageState extends State<AdminPage> {
                                     ),
                                   ),
                                   DataCell(
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: user.activeSessions > 0
+                                            ? Colors.green.withOpacity(0.2)
+                                            : Colors.grey.withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(
+                                            Icons.devices,
+                                            size: 16,
+                                            color: user.activeSessions > 0
+                                                ? Colors.green
+                                                : Colors.grey,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Text(
+                                            '${user.activeSessions}',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: user.activeSessions > 0
+                                                  ? Colors.green.shade700
+                                                  : Colors.grey,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
                                     IconButton(
                                       icon: const Icon(Icons.more_vert),
                                       onPressed: () => _showActionsMenu(user),
@@ -373,6 +570,7 @@ class _AdminPageState extends State<AdminPage> {
                                 ],
                               );
                             }).toList(),
+                            ),
                           ),
                         ),
                       ],

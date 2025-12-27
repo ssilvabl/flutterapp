@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/error_messages.dart';
 import '../utils/session_manager.dart';
 import 'payments_list.dart';
+import 'preference_selection.dart';
 import 'register.dart';
 import 'package:intl/intl.dart';
 
@@ -35,14 +36,15 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
       
       if (ok && res.user != null) {
-        // Obtener rol del usuario
+        // Obtener rol y preferencia del usuario
         final profileResponse = await Supabase.instance.client
             .from('profiles')
-            .select('role')
+            .select('role, interface_preference')
             .eq('id', res.user!.id)
             .single();
 
         final userRole = profileResponse['role'] as String? ?? 'free';
+        final interfacePreference = profileResponse['interface_preference'] as String?;
 
         // Verificar límite de sesiones
         final sessionCheck = await SessionManager.checkSessionLimit(res.user!.id, userRole);
@@ -64,10 +66,18 @@ class _LoginPageState extends State<LoginPage> {
             await SessionManager.createSession();
             
             if (!mounted) return;
-            Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const PaymentsListPage()),
-              (route) => false,
-            );
+            // Verificar si necesita elegir preferencia
+            if (interfacePreference == null || interfacePreference.isEmpty) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
+                (route) => false,
+              );
+            } else {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+                (route) => false,
+              );
+            }
           } else {
             // Usuario canceló, cerrar sesión actual
             await Supabase.instance.client.auth.signOut();
@@ -81,10 +91,18 @@ class _LoginPageState extends State<LoginPage> {
           await SessionManager.createSession();
           
           if (!mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const PaymentsListPage()),
-            (route) => false,
-          );
+          // Verificar si necesita elegir preferencia
+          if (interfacePreference == null || interfacePreference.isEmpty) {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
+              (route) => false,
+            );
+          } else {
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(builder: (_) => const PaymentsListPage()),
+              (route) => false,
+            );
+          }
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo iniciar sesión')));
@@ -155,7 +173,7 @@ class _LoginPageState extends State<LoginPage> {
                     ],
                   ),
                 );
-              }).toList(),
+              }),
               const SizedBox(height: 16),
               const Text(
                 '¿Deseas cerrar las sesiones anteriores y continuar?',

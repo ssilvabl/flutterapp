@@ -86,12 +86,14 @@ class SessionManager {
 
       final sessionToken = _supabase.auth.currentSession?.accessToken ?? '';
       final deviceInfo = _getDeviceInfo();
+      final now = DateTime.now();
 
       await _supabase.from('user_sessions').insert({
         'user_id': userId,
         'session_token': sessionToken,
         'device_info': deviceInfo,
-        'last_activity': DateTime.now().toIso8601String(),
+        'last_activity': now.toIso8601String(),
+        'created_at': now.toIso8601String(),
       });
 
       print('SessionManager: Session created for user $userId on $deviceInfo');
@@ -110,9 +112,10 @@ class SessionManager {
         return;
       }
 
+      final now = DateTime.now();
       await _supabase
           .from('user_sessions')
-          .update({'last_activity': DateTime.now().toIso8601String()})
+          .update({'last_activity': now.toIso8601String()})
           .eq('user_id', userId)
           .eq('session_token', sessionToken);
 
@@ -146,6 +149,31 @@ class SessionManager {
       }
     } catch (e) {
       print('Error removing current session: $e');
+    }
+  }
+
+  /// Verifica si la sesión actual todavía existe en la base de datos
+  /// Retorna true si la sesión existe, false si fue eliminada
+  static Future<bool> isSessionValid() async {
+    try {
+      final userId = _supabase.auth.currentUser?.id;
+      final sessionToken = _supabase.auth.currentSession?.accessToken;
+
+      if (userId == null || sessionToken == null) {
+        return false;
+      }
+
+      final response = await _supabase
+          .from('user_sessions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('session_token', sessionToken)
+          .maybeSingle();
+
+      return response != null;
+    } catch (e) {
+      print('Error checking session validity: $e');
+      return true; // En caso de error, asumir que es válida
     }
   }
 

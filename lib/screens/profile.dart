@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../utils/error_messages.dart';
 import '../constants/user_roles.dart';
+import '../utils/interface_labels.dart';
+import '../utils/preference_provider.dart';
 import 'login.dart';
 import 'profile_edit_dialog.dart';
 
@@ -18,6 +20,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String? _fullName;
   String? _company;
   UserRole _userRole = UserRole.free;
+  InterfacePreference _interfacePreference = InterfacePreference.prestamista;
 
   @override
   void initState() {
@@ -46,6 +49,8 @@ class _ProfilePageState extends State<ProfilePage> {
           _company = res['company'] as String?;
           final roleStr = res['role'] as String? ?? 'free';
           _userRole = UserRoleExtension.fromString(roleStr);
+          final prefStr = res['interface_preference'] as String?;
+          _interfacePreference = InterfacePreferenceExtension.fromString(prefStr);
         });
       }
     } catch (_) {}
@@ -233,6 +238,8 @@ class _ProfilePageState extends State<ProfilePage> {
                         ),
                         const SizedBox(height: 12),
                         _buildField('Nombre Empresa', _company ?? ''),
+                        const SizedBox(height: 24),
+                        _buildInterfacePreferenceSelector(),
                         const SizedBox(height: 12),
                         _buildRoleField(),
                       ],
@@ -270,6 +277,112 @@ class _ProfilePageState extends State<ProfilePage> {
               icon: const Icon(Icons.edit_outlined)),
         ]
       ],
+    );
+  }
+
+  Future<void> _updateInterfacePreference(InterfacePreference newPref) async {
+    final uid = _user?.id;
+    if (uid == null) return;
+    
+    try {
+      // Actualizar en el provider (esto hace el update en la BD y notifica a toda la app)
+      final preferenceProvider = PreferenceInheritedWidget.of(context);
+      if (preferenceProvider != null) {
+        await preferenceProvider.updatePreference(newPref);
+      }
+      
+      setState(() {
+        _interfacePreference = newPref;
+      });
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Preferencia actualizada - Los cambios se aplicaron en toda la app')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = friendlySupabaseMessage(e,
+          fallback: 'Error al actualizar preferencia');
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Widget _buildInterfacePreferenceSelector() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.blue.shade50,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            '¿Qué tipo de interfaz prefieres?',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'Esto cambiará cómo se muestran los nombres en la aplicación',
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<InterfacePreference>(
+            value: _interfacePreference,
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide.none,
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 12,
+              ),
+            ),
+            items: InterfacePreference.values.map((pref) {
+              final labels = InterfaceLabels(pref);
+              return DropdownMenuItem(
+                value: pref,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      pref.displayName,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    Text(
+                      '${labels.cobros} / ${labels.pagos}',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: Colors.black54,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+            onChanged: _loading
+                ? null
+                : (value) {
+                    if (value != null) {
+                      _updateInterfacePreference(value);
+                    }
+                  },
+          ),
+        ],
+      ),
     );
   }
 

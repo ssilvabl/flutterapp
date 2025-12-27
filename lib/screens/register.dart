@@ -32,9 +32,10 @@ class _RegisterPageState extends State<RegisterPage> {
     final navigator = Navigator.of(context);
 
     if (password != confirm) {
-      if (mounted)
+      if (mounted) {
         messenger.showSnackBar(
             const SnackBar(content: Text('Las contraseñas no coinciden')));
+      }
       setState(() => _loading = false);
       return;
     }
@@ -43,6 +44,9 @@ class _RegisterPageState extends State<RegisterPage> {
       final res = await Supabase.instance.client.auth.signUp(
         email: email,
         password: password,
+        data: {
+          'full_name': name,
+        },
       );
 
       final ok = res.user != null;
@@ -57,6 +61,7 @@ class _RegisterPageState extends State<RegisterPage> {
               'full_name': name,
               'email': email,
               'role': 'free',
+              // No establecer interface_preference aquí - se elegirá en la pantalla de bienvenida
             });
             debugPrint('Profile created successfully for user: $userId');
           } catch (e) {
@@ -174,10 +179,12 @@ class _RegisterPageState extends State<RegisterPage> {
                       ),
                       obscureText: true,
                       validator: (v) {
-                        if (v == null || v.isEmpty)
+                        if (v == null || v.isEmpty) {
                           return 'Ingresa una contraseña';
-                        if (v.length < 6)
+                        }
+                        if (v.length < 6) {
                           return 'La contraseña debe tener al menos 6 caracteres';
+                        }
                         return null;
                       },
                     ),
@@ -196,10 +203,12 @@ class _RegisterPageState extends State<RegisterPage> {
                       ),
                       obscureText: true,
                       validator: (v) {
-                        if (v == null || v.isEmpty)
+                        if (v == null || v.isEmpty) {
                           return 'Confirma la contraseña';
-                        if (v != _passwordController.text)
+                        }
+                        if (v != _passwordController.text) {
                           return 'Las contraseñas no coinciden';
+                        }
                         return null;
                       },
                     ),
