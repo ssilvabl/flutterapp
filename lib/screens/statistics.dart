@@ -2,6 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
+import 'package:excel/excel.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import '../utils/error_messages.dart';
 import '../utils/preference_provider.dart';
 
@@ -114,6 +118,175 @@ class _StatisticsPageState extends State<StatisticsPage> {
     return '${formatter.format(_startDate)} - ${formatter.format(_endDate)}';
   }
 
+  Future<void> _exportToExcel() async {
+    try {
+      setState(() => _loading = true);
+      
+      final userId = _supabase.auth.currentUser?.id;
+      if (userId == null) return;
+
+      // Obtener todos los pagos del usuario
+      final paymentsRes = await _supabase
+          .from('payments')
+          .select('id, entity_name, amount, type, created_at')
+          .eq('user_id', userId)
+          .order('created_at', ascending: true);
+
+      final payments = List<Map<String, dynamic>>.from(paymentsRes);
+      
+      if (payments.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hay registros para exportar')),
+        );
+        return;
+      }
+
+      // Crear el archivo Excel
+      var excel = Excel.createExcel();
+      Sheet sheet = excel['Registros'];
+      excel.delete('Sheet1'); // Eliminar la hoja por defecto
+      
+      // Colores
+      var headerStyle = CellStyle(
+        fontColorHex: ExcelColor.white,
+        backgroundColorHex: ExcelColor.fromHexString('#1F2323'),
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+        verticalAlign: VerticalAlign.Center,
+      );
+      
+      var positiveStyle = CellStyle(
+        fontColorHex: ExcelColor.fromHexString('#047857'),
+        backgroundColorHex: ExcelColor.fromHexString('#D1FAE5'),
+        horizontalAlign: HorizontalAlign.Right,
+      );
+      
+      var negativeStyle = CellStyle(
+        fontColorHex: ExcelColor.fromHexString('#DC2626'),
+        backgroundColorHex: ExcelColor.fromHexString('#FEE2E2'),
+        horizontalAlign: HorizontalAlign.Right,
+      );
+
+      // Preparar datos: cada columna es un pago
+      int col = 0;
+      int maxRows = 1; // Empezar en 1 para el encabezado
+      
+      for (final payment in payments) {
+        final paymentId = payment['id'];
+        
+        // Obtener movimientos del pago
+        final movementsRes = await _supabase
+            .from('payments_movements')
+            .select('amount, movement_type, created_at')
+            .eq('payment_id', paymentId)
+            .order('created_at', ascending: true);
+        
+        final movements = List<Map<String, dynamic>>.from(movementsRes);
+        
+        // Encabezado de la columna (nombre del pago)
+        var headerCell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: 0));
+        headerCell.value = TextCellValue(payment['entity_name'] ?? 'Sin nombre');
+        headerCell.cellStyle = headerStyle;
+        
+        // Agregar tipo de registro (Cobro/Pago/Activo/Pasivo)
+        var typeCell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: 1));
+        typeCell.value = TextCellValue('(${payment['type']})');
+        typeCell.cellStyle = CellStyle(
+          backgroundColorHex: payment['type'] == 'cobro' 
+              ? ExcelColor.fromHexString('#DBEAFE') 
+              : ExcelColor.fromHexString('#FEF3C7'),
+          italic: true,
+          horizontalAlign: HorizontalAlign.Center,
+        );
+        
+        // Agregar movimientos
+        int row = 2;
+        for (final movement in movements) {
+          final amount = (movement['amount'] as num).toDouble();
+          final type = movement['movement_type'] as String;
+          
+          var cell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+          
+          // Determinar el valor según el tipo
+          double displayAmount;
+          CellStyle style;
+          
+          if (type == 'initial' || type == 'increment') {
+            displayAmount = amount;
+            style = positiveStyle;
+          } else { // reduction
+            displayAmount = -amount;
+            style = negativeStyle;
+          }
+          
+          cell.value = DoubleCellValue(displayAmount);
+          cell.cellStyle = style;
+          
+          row++;
+        }
+        
+        // Agregar total al final
+        var totalCell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row));
+        totalCell.value = DoubleCellValue((payment['amount'] as num).toDouble());
+        totalCell.cellStyle = CellStyle(
+          backgroundColorHex: ExcelColor.fromHexString('#6366F1'),
+          fontColorHex: ExcelColor.white,
+          bold: true,
+          horizontalAlign: HorizontalAlign.Right,
+        );
+        
+        // Agregar etiqueta "TOTAL"
+        var labelCell = sheet.cell(CellIndex.indexByColumnRow(columnIndex: col, rowIndex: row + 1));
+        labelCell.value = TextCellValue('TOTAL');
+        labelCell.cellStyle = CellStyle(
+          bold: true,
+          italic: true,
+          horizontalAlign: HorizontalAlign.Center,
+        );
+        
+        if (row + 2 > maxRows) maxRows = row + 2;
+        col++;
+      }
+      
+      // Ajustar ancho de columnas
+      for (int i = 0; i < payments.length; i++) {
+        sheet.setColumnWidth(i, 20);
+      }
+      
+      // Guardar archivo
+      var fileBytes = excel.save();
+      if (fileBytes == null) {
+        throw Exception('Error al generar el archivo Excel');
+      }
+      
+      final directory = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final file = File('${directory.path}/registros_$timestamp.xlsx');
+      await file.writeAsBytes(fileBytes);
+      
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        subject: 'Registros - Sepagos',
+      );
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Excel generado: ${payments.length} registros'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Error al generar Excel: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   @override
   @override
   Widget build(BuildContext context) {
@@ -131,6 +304,11 @@ class _StatisticsPageState extends State<StatisticsPage> {
             icon: const Icon(Icons.date_range),
             onPressed: _selectDateRange,
             tooltip: 'Filtrar por fecha',
+          ),
+          IconButton(
+            icon: const Icon(Icons.file_download),
+            onPressed: _exportToExcel,
+            tooltip: 'Exportar a Excel',
           ),
         ],
       ),

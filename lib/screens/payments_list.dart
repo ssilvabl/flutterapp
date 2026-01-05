@@ -13,6 +13,7 @@ import 'payment_details.dart';
 import 'profile.dart';
 import 'admin.dart';
 import 'statistics.dart';
+import 'subscription.dart';
 
 class PaymentsListPage extends StatefulWidget {
   const PaymentsListPage({super.key});
@@ -97,24 +98,59 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       });
       return;
     }
-    _fetch();
-    _loadProfile();
-    _loadUserRole();
+    
+    // Cargar datos en paralelo para mejorar rendimiento
+    _initializeData();
     _startSessionValidation();
-    if (_userId != null) {
-      _paymentsSub = _supabase
-          .from('payments')
-          .stream(primaryKey: ['id'])
-          .eq('user_id', _userId)
-          .order('created_at', ascending: false)
-          .listen((data) {
-            if (!mounted) return;
-            setState(() {
-              _items = data.map((e) => Payment.fromMap(e)).toList();
-            });
-            _applyFilter();
-          });
+    
+    // Nota: Removimos el stream en tiempo real para respetar la paginación.
+    // Los datos se actualizarán cuando el usuario agregue/edite/elimine registros
+    // o cuando haga pull-to-refresh.
+  }
+  
+  // Inicializar todos los datos en paralelo
+  Future<void> _initializeData() async {
+    await Future.wait([
+      _fetch(),
+      _loadProfileAndRole(), // Combinar carga de perfil y rol
+    ]);
+  }
+
+  // Cargar perfil y rol en una sola consulta
+  Future<void> _loadProfileAndRole() async {
+    try {
+      final uid = Supabase.instance.client.auth.currentUser?.id;
+      if (uid == null) return;
+      
+      final res = await _supabase
+          .from('profiles')
+          .select('company, full_name, role')
+          .eq('id', uid)
+          .maybeSingle();
+      
+      if (res != null) {
+        setState(() {
+          _profileName = res['company'] ?? res['full_name'];
+          final roleStr = res['role'] as String? ?? 'free';
+          _userRole = UserRoleExtension.fromString(roleStr);
+        });
+        
+        // Verificar límite de transacciones
+        await _checkTransactionLimit();
+      }
+    } catch (e) {
+      print('Error loading profile and role: $e');
     }
+  }
+
+  Future<void> _loadProfile() async {
+    // Mantener por compatibilidad, pero ahora llama a la versión combinada
+    await _loadProfileAndRole();
+  }
+
+  Future<void> _loadUserRole() async {
+    // Mantener por compatibilidad, pero ahora llama a la versión combinada
+    await _loadProfileAndRole();
   }
 
   String? get _userId => Supabase.instance.client.auth.currentUser?.id;
@@ -177,39 +213,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     super.dispose();
   }
 
-  Future<void> _loadProfile() async {
-    try {
-      final uid = Supabase.instance.client.auth.currentUser?.id;
-      if (uid == null) return;
-      final res =
-          await _supabase.from('profiles').select().eq('id', uid).maybeSingle();
-      if (res != null) {
-        setState(() {
-          _profileName = res['company'] ?? res['full_name'];
-        });
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _loadUserRole() async {
-    try {
-      final uid = Supabase.instance.client.auth.currentUser?.id;
-      if (uid == null) return;
-      final res = await _supabase
-          .from('profiles')
-          .select('role')
-          .eq('id', uid)
-          .maybeSingle();
-      if (res != null) {
-        final roleStr = res['role'] as String? ?? 'free';
-        setState(() => _userRole = UserRoleExtension.fromString(roleStr));
-        
-        // Verificar límite de transacciones
-        await _checkTransactionLimit();
-      }
-    } catch (_) {}
-  }
-
   Future<void> _checkTransactionLimit() async {
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
@@ -230,8 +233,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   /// Inicia la verificación periódica de validez de sesión
   void _startSessionValidation() {
-    // Verificar cada 30 segundos si la sesión sigue siendo válida
-    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 30), (timer) async {
+    // Verificar cada 60 segundos (optimizado para mejor rendimiento)
+    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 60), (timer) async {
       if (!mounted) {
         timer.cancel();
         return;
@@ -468,6 +471,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                     onTap: () async {
                       final picked = await showDatePicker(
                           context: context,
+                          locale: const Locale('es', 'ES'),
                           initialDate: endDate ?? DateTime.now(),
                           firstDate: DateTime(2000),
                           lastDate: DateTime(2100));
@@ -520,11 +524,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     );
 
     if (result == true) {
-      // Siempre recargar para asegurar actualización inmediata
-      setState(() {
-        _items = [];
-        _page = 0;
-      });
+      // Recargar desde el inicio para mostrar el cambio
+      _page = 0;
+      _items.clear();
       await _fetch();
       
       // Actualizar el límite de transacciones después de agregar/editar
@@ -568,8 +570,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         final labels = PreferenceInheritedWidget.watch(context).labels;
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} agregado' : '${labels.pago} agregado')));
-        // Recargar datos para actualizar la vista
-        await _fetch();
       }
     } catch (e) {
       if (!mounted) return;
@@ -633,10 +633,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         final labels = PreferenceInheritedWidget.watch(context).labels;
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} actualizado' : '${labels.pago} actualizado')));
-        // Recargar datos para actualizar la vista
-        await _fetch();
       }
-      _applyFilter();
     } catch (e) {
       if (!mounted) return;
       final msg =
@@ -680,6 +677,16 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 Navigator.of(context).pop();
                 Navigator.of(context).push(
                   MaterialPageRoute(builder: (_) => const StatisticsPage()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.card_membership),
+              title: const Text('Suscripción'),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const SubscriptionPage()),
                 );
               },
             ),
@@ -756,7 +763,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                               Expanded(
                                                 child: GestureDetector(
                                                   onTap: () async {
-                                                    final result = await Navigator.of(context)
+                                                    await Navigator.of(context)
                                                         .push(MaterialPageRoute(
                                                             builder: (_) =>
                                                                 PaymentDetailsPage(
@@ -768,12 +775,13 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                                           it.createdAt,
                                                                       'endDate':
                                                                           it.endDate,
+                                                                      'type': it.type,
                                                                       'description':
                                                                           it.description,
+                                                                    },
+                                                                    onEdit: (payment) async {
+                                                                      await _showEditDialog(p: payment);
                                                                     })));
-                                                    if (result != null && result['action'] == 'edit') {
-                                                      await _showEditDialog(p: it);
-                                                    }
                                                   },
                                                   child: Text(
                                                     it.entity,
@@ -829,7 +837,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                   children: [
                                                     GestureDetector(
                                                       onTap: () async {
-                                                        final result = await Navigator.of(context)
+                                                        await Navigator.of(context)
                                                             .push(MaterialPageRoute(
                                                                 builder: (_) =>
                                                                     PaymentDetailsPage(
@@ -841,12 +849,13 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                                               it.createdAt,
                                                                           'endDate':
                                                                               it.endDate,
+                                                                          'type': it.type,
                                                                           'description':
                                                                               it.description,
+                                                                        },
+                                                                        onEdit: (payment) async {
+                                                                          await _showEditDialog(p: payment);
                                                                         })));
-                                                        if (result != null && result['action'] == 'edit') {
-                                                          await _showEditDialog(p: it);
-                                                        }
                                                       },
                                                       child: Text(it.entity,
                                                           style: const TextStyle(
@@ -903,7 +912,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                           return;
                                         }
                                         if (v == 'details') {
-                                          final result = await Navigator.of(context).push(
+                                          await Navigator.of(context).push(
                                               MaterialPageRoute(
                                                   builder: (_) =>
                                                       PaymentDetailsPage(
@@ -915,12 +924,13 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                                 it.createdAt,
                                                             'endDate':
                                                                 it.endDate,
+                                                            'type': it.type,
                                                             'description':
                                                                 it.description,
+                                                          },
+                                                          onEdit: (payment) async {
+                                                            await _showEditDialog(p: payment);
                                                           })));
-                                          if (result != null && result['action'] == 'edit') {
-                                            await _showEditDialog(p: it);
-                                          }
                                           return;
                                         }
                                       },
@@ -957,7 +967,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                               color: Colors.blue, size: 28),
                                           tooltip: 'Detalles',
                                           onPressed: () async {
-                                            final result = await Navigator.of(context)
+                                            await Navigator.of(context)
                                                 .push(MaterialPageRoute(
                                                     builder: (_) =>
                                                         PaymentDetailsPage(
@@ -969,32 +979,14 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                                                   it.createdAt,
                                                               'endDate':
                                                                   it.endDate,
+                                                              'type': it.type,
                                                               'description':
                                                                   it.description,
+                                                            },
+                                                            onEdit: (payment) async {
+                                                              await _showEditDialog(p: payment);
                                                             })));
-                                            if (result != null && result['action'] == 'edit') {
-                                              await _showEditDialog(p: it);
-                                            }
                                           },
-                                        ),
-                                        const SizedBox(width: 8),
-                                        ElevatedButton.icon(
-                                          style: ElevatedButton.styleFrom(
-                                            backgroundColor:
-                                                const Color(0xFFf3e8ff),
-                                            foregroundColor:
-                                                const Color(0xFF6b21a8),
-                                            shape: RoundedRectangleBorder(
-                                                borderRadius:
-                                                    BorderRadius.circular(20)),
-                                            padding: const EdgeInsets.symmetric(
-                                                horizontal: 12, vertical: 8),
-                                          ),
-                                          icon: const Icon(Icons.picture_as_pdf,
-                                              size: 16),
-                                          label: const Text('Factura',
-                                              style: TextStyle(fontSize: 12)),
-                                          onPressed: () => _shareInvoice(it),
                                         ),
                                       ],
                                     ),
@@ -1240,9 +1232,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    _buildTotalCard('Total Invertido', _totalCobros),
+                    _buildTotalCard(labels.totalInvertidoLabel, _totalCobros),
                     const SizedBox(width: 8),
-                    _buildTotalCard('Total De Pagos', _totalPagos),
+                    _buildTotalCard(labels.totalPagosLabel, _totalPagos),
                   ],
                 ),
                 const SizedBox(height: 6),
@@ -1336,9 +1328,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         const SizedBox(height: 8),
         Row(
           children: [
-            Expanded(child: _buildTotalCard('Total Invertido', _totalCobros)),
+            Expanded(child: _buildTotalCard(labels.totalInvertidoLabel, _totalCobros)),
             const SizedBox(width: 8),
-            Expanded(child: _buildTotalCard('Total De Pagos', _totalPagos)),
+            Expanded(child: _buildTotalCard(labels.totalPagosLabel, _totalPagos)),
           ],
         ),
         const SizedBox(height: 6),
@@ -1398,7 +1390,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 .from('payments_movements')
                 .select()
                 .eq('payment_id', nid)
-                .order('created_at', ascending: false);
+                .order('created_at', ascending: true);
             movesData = (res2 as List<dynamic>? ?? []);
           }
         } catch (_) {
@@ -1421,9 +1413,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           .where((m) => m.movementType == 'reduction')
           .fold(0.0, (s, m) => s + m.amount);
 
+      // Calcular el monto actual real: inicial + incrementos - reducciones
+      final amountVal = initial + increments - reductions;
+
       final doc = pw.Document();
       final profile = _profileName ?? '';
-      final amountVal = p.amount;
 
       doc.addPage(pw.MultiPage(
         build: (pw.Context ctx) {

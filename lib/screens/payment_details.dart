@@ -2,11 +2,14 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
+import 'payments_list.dart';
 
 class PaymentDetailsPage extends StatefulWidget {
   final Map<String, dynamic> payment;
-  const PaymentDetailsPage({super.key, required this.payment});
+  final Function(Payment)? onEdit;
+  const PaymentDetailsPage({super.key, required this.payment, this.onEdit});
 
   @override
   State<PaymentDetailsPage> createState() => _PaymentDetailsPageState();
@@ -51,7 +54,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     setState(() => _loading = true);
     try {
       final pid = widget.payment['id']?.toString();
-      final res = await _supabase.from('payments_movements').select().eq('payment_id', pid).order('created_at', ascending: false);
+      final res = await _supabase.from('payments_movements').select().eq('payment_id', pid).order('created_at', ascending: true);
       final List<Map<String, dynamic>> data = (res is List) ? List<Map<String, dynamic>>.from(res) : <Map<String, dynamic>>[];
       setState(() => _moves = data.map((e) => Movement.fromMap(e)).toList());
     } catch (e) {
@@ -79,7 +82,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
         .from('payments_movements')
         .stream(primaryKey: ['id'])
         .eq('payment_id', pid)
-        .order('created_at', ascending: false)
+        .order('created_at', ascending: true)
         .listen((data) {
       if (!mounted) return;
       setState(() {
@@ -96,42 +99,266 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
 
   double _sumByType(String type) => _moves.where((m) => m.movementType == type).fold(0.0, (s, m) => s + m.amount);
 
+  // Calcular el monto actual basado en los movimientos
+  double _calculateCurrentAmount() {
+    final initial = _sumByType('initial');
+    final increments = _sumByType('increment');
+    final reductions = _sumByType('reduction');
+    return initial + increments - reductions;
+  }
+
   Future<void> _sharePdf() async {
     final pdf = pw.Document();
     final entity = widget.payment['entity']?.toString() ?? '';
     final profile = _profileName ?? '';
-    final amountVal = (widget.payment['amount'] is num) ? (widget.payment['amount'] as num).toDouble() : double.tryParse(widget.payment['amount']?.toString() ?? '0') ?? 0.0;
+    
+    // Calcular el monto actual real basado en los movimientos
+    final amountVal = _calculateCurrentAmount();
 
+    // Colores personalizados usando PdfColor del paquete pdf
+    final primaryBlue = PdfColor.fromHex('#2563eb');
+    final lightBlue = PdfColor.fromHex('#dbeafe');
+    final redColor = PdfColor.fromHex('#dc2626');
+    final greenColor = PdfColor.fromHex('#16a34a');
 
-    pdf.addPage(pw.MultiPage(
-      build: (pw.Context ctx) => [
-        pw.Header(level: 0, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-          if (profile.isNotEmpty) pw.Text(profile, style: const pw.TextStyle(fontSize: 18)),
-          pw.Text(entity, style: const pw.TextStyle(fontSize: 16)),
-        ])),
-        pw.SizedBox(height: 6),
-        pw.Paragraph(text: 'Monto Actual: \$${_formatAmount(amountVal)}'),
-        pw.SizedBox(height: 10),
-        pw.TableHelper.fromTextArray(context: ctx,
-          headers: ['Fecha', 'Tipo', 'Valor'],
-          data: _moves.map((m) {
-            final tipo = m.movementType == 'initial'
-                ? 'Inicial'
-                : m.movementType == 'increment'
-                    ? 'Incremento'
-                    : m.movementType == 'reduction'
-                        ? 'Reducción'
-                        : m.movementType;
-            return [m.createdAt.toIso8601String().substring(0, 10), tipo, '\$${_formatAmount(m.amount)}'];
-          }).toList(),
+    pdf.addPage(
+      pw.Page(
+        margin: const pw.EdgeInsets.all(32),
+        build: (pw.Context ctx) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            // Encabezado azul
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(20),
+              decoration: pw.BoxDecoration(
+                color: primaryBlue,
+                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(
+                    profile.isNotEmpty ? profile : 'SilvaSoft',
+                    style: pw.TextStyle(
+                      fontSize: 24,
+                      fontWeight: pw.FontWeight.bold,
+                      color: PdfColors.white,
+                    ),
+                  ),
+                  pw.SizedBox(height: 4),
+                  pw.Text(
+                    'Factura - $entity',
+                    style: pw.TextStyle(
+                      fontSize: 14,
+                      color: PdfColors.white,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            pw.SizedBox(height: 24),
+
+            // Monto actual en cuadro azul claro
+            pw.Container(
+              width: double.infinity,
+              padding: const pw.EdgeInsets.all(16),
+              decoration: pw.BoxDecoration(
+                color: lightBlue,
+                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+              ),
+              child: pw.Center(
+                child: pw.Text(
+                  'Monto Actual: \$${_formatAmount(amountVal)}',
+                  style: pw.TextStyle(
+                    fontSize: 20,
+                    fontWeight: pw.FontWeight.bold,
+                    color: primaryBlue,
+                  ),
+                ),
+              ),
+            ),
+            pw.SizedBox(height: 24),
+
+            // Tabla de movimientos
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.grey400, width: 1),
+              children: [
+                // Encabezado de la tabla
+                pw.TableRow(
+                  decoration: pw.BoxDecoration(color: primaryBlue),
+                  children: [
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(12),
+                      child: pw.Text(
+                        'Fecha',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.white,
+                        ),
+                      ),
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(12),
+                      child: pw.Text(
+                        'Tipo',
+                        style: pw.TextStyle(
+                          fontSize: 12,
+                          fontWeight: pw.FontWeight.bold,
+                          color: PdfColors.white,
+                        ),
+                      ),
+                    ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.all(12),
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text(
+                          'Valor',
+                          style: pw.TextStyle(
+                            fontSize: 12,
+                            fontWeight: pw.FontWeight.bold,
+                            color: PdfColors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                // Filas de datos
+                ..._moves.map((m) {
+                  final tipo = m.movementType == 'initial'
+                      ? 'Inicial'
+                      : m.movementType == 'increment'
+                          ? 'Incremento'
+                          : m.movementType == 'reduction'
+                              ? 'Reducción'
+                              : m.movementType;
+                  
+                  // Color según el tipo
+                  final valorColor = m.movementType == 'reduction'
+                      ? redColor
+                      : greenColor;
+
+                  return pw.TableRow(
+                    children: [
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(12),
+                        child: pw.Text(
+                          m.createdAt.toIso8601String().substring(0, 10),
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(12),
+                        child: pw.Text(
+                          tipo,
+                          style: const pw.TextStyle(fontSize: 11),
+                        ),
+                      ),
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.all(12),
+                        child: pw.Align(
+                          alignment: pw.Alignment.centerRight,
+                          child: pw.Text(
+                            '\$${_formatAmount(m.amount)}',
+                            style: pw.TextStyle(
+                              fontSize: 11,
+                              color: valorColor,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                }).toList(),
+              ],
+            ),
+            pw.SizedBox(height: 24),
+
+            // Resumen final
+            pw.Container(
+              padding: const pw.EdgeInsets.all(16),
+              decoration: pw.BoxDecoration(
+                border: pw.Border.all(color: PdfColors.grey300, width: 1),
+                borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+              ),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Monto Inicial:',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                      pw.Text(
+                        '\$${_formatAmount(_sumByType('initial'))}',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 8),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Total Incrementos:',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                      pw.Text(
+                        '\$${_formatAmount(_sumByType('increment'))}',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 8),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Total Reducciones:',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                      pw.Text(
+                        '\$${_formatAmount(_sumByType('reduction'))}',
+                        style: const pw.TextStyle(fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  pw.SizedBox(height: 12),
+                  pw.Divider(color: PdfColors.grey300),
+                  pw.SizedBox(height: 12),
+                  pw.Row(
+                    mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                    children: [
+                      pw.Text(
+                        'Monto Final:',
+                        style: pw.TextStyle(
+                          fontSize: 14,
+                          fontWeight: pw.FontWeight.bold,
+                          color: primaryBlue,
+                        ),
+                      ),
+                      pw.Text(
+                        '\$${_formatAmount(amountVal)}',
+                        style: pw.TextStyle(
+                          fontSize: 16,
+                          fontWeight: pw.FontWeight.bold,
+                          color: primaryBlue,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
-        pw.SizedBox(height: 10),
-        pw.Paragraph(text: 'Monto Inicial: \$${_formatAmount(_sumByType('initial'))}'),
-        pw.Paragraph(text: 'Total Incrementos: \$${_formatAmount(_sumByType('increment'))}'),
-        pw.Paragraph(text: 'Total Reducciones: \$${_formatAmount(_sumByType('reduction'))}'),
-        pw.Paragraph(text: 'Monto Final: \$${_formatAmount(amountVal)}'),
-      ],
-    ));
+      ),
+    );
 
     await Printing.sharePdf(bytes: await pdf.save(), filename: 'factura_$entity.pdf');
   }
@@ -203,8 +430,21 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
         actions: [
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: () {
-              Navigator.of(context).pop({'action': 'edit', 'payment': widget.payment});
+            onPressed: () async {
+              if (widget.onEdit != null) {
+                final payment = Payment(
+                  id: widget.payment['id'].toString(),
+                  entity: widget.payment['entity']?.toString() ?? '',
+                  amount: (widget.payment['amount'] as num?)?.toDouble() ?? 0.0,
+                  createdAt: widget.payment['createdAt'] as DateTime? ?? DateTime.now(),
+                  endDate: widget.payment['endDate'] as DateTime?,
+                  type: widget.payment['type']?.toString() ?? 'cobro',
+                  description: widget.payment['description']?.toString(),
+                );
+                widget.onEdit!(payment);
+                // Recargar movimientos después de editar
+                await _loadMovements();
+              }
             },
             tooltip: 'Editar',
           ),
@@ -223,7 +463,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Monto Actual: \$${_formatAmount((widget.payment['amount'] is num) ? (widget.payment['amount'] as num).toDouble() : double.tryParse(widget.payment['amount']?.toString() ?? '0') ?? 0.0)}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text('Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
           if ((widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '') ) != null) Text('Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
@@ -249,10 +489,56 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                         : m.movementType == 'reduction'
                             ? 'Reducción'
                             : m.movementType;
-                return ListTile(
-                  title: Text(tipo),
-                  subtitle: Text(_formatDate(m.createdAt)),
-                  trailing: Text('\$${_formatAmount(m.amount)}'),
+                
+                // Definir color según el tipo de movimiento
+                Color amountColor;
+                Color backgroundColor;
+                IconData icon;
+                
+                if (m.movementType == 'increment') {
+                  amountColor = Colors.green.shade700;
+                  backgroundColor = Colors.green.shade50;
+                  icon = Icons.arrow_upward;
+                } else if (m.movementType == 'reduction') {
+                  amountColor = Colors.red.shade700;
+                  backgroundColor = Colors.red.shade50;
+                  icon = Icons.arrow_downward;
+                } else {
+                  // inicial
+                  amountColor = Colors.blue.shade700;
+                  backgroundColor = Colors.blue.shade50;
+                  icon = Icons.monetization_on;
+                }
+                
+                return Container(
+                  margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                  decoration: BoxDecoration(
+                    color: backgroundColor,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: amountColor.withOpacity(0.3)),
+                  ),
+                  child: ListTile(
+                    leading: Icon(icon, color: amountColor),
+                    title: Text(
+                      tipo,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: amountColor,
+                      ),
+                    ),
+                    subtitle: Text(
+                      _formatDate(m.createdAt),
+                      style: TextStyle(color: Colors.grey.shade700),
+                    ),
+                    trailing: Text(
+                      '\$${_formatAmount(m.amount)}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: amountColor,
+                      ),
+                    ),
+                  ),
                 );
               }
             )

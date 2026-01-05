@@ -12,9 +12,32 @@ class PreferenceProvider extends ChangeNotifier {
 
   PreferenceProvider() {
     loadPreference();
+    _setupAuthListener();
+  }
+
+  void _setupAuthListener() {
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      final event = data.event;
+      if (event == AuthChangeEvent.signedIn) {
+        // Usuario inició sesión, recargar preferencias
+        loadPreference();
+      } else if (event == AuthChangeEvent.signedOut) {
+        // Usuario cerró sesión, resetear a valores por defecto
+        reset();
+      }
+    });
+  }
+
+  void reset() {
+    _preference = InterfacePreference.prestamista;
+    _isLoading = false;
+    notifyListeners();
   }
 
   Future<void> loadPreference() async {
+    _isLoading = true;
+    notifyListeners();
+    
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid == null) {

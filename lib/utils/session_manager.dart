@@ -75,6 +75,14 @@ class SessionManager {
     }
   }
 
+  // ID único de esta sesión de la app (persiste durante toda la vida de la app)
+  static String? _sessionId;
+
+  /// Genera un ID único para esta sesión de la app
+  static String _generateSessionId() {
+    return '${DateTime.now().millisecondsSinceEpoch}_${_getDeviceInfo().hashCode}';
+  }
+
   /// Crea una nueva sesión para el usuario actual
   static Future<void> createSession() async {
     try {
@@ -84,19 +92,42 @@ class SessionManager {
         return;
       }
 
+      // Generar un ID único para esta sesión si no existe
+      _sessionId ??= _generateSessionId();
+
       final sessionToken = _supabase.auth.currentSession?.accessToken ?? '';
       final deviceInfo = _getDeviceInfo();
       final now = DateTime.now();
 
-      await _supabase.from('user_sessions').insert({
-        'user_id': userId,
-        'session_token': sessionToken,
-        'device_info': deviceInfo,
-        'last_activity': now.toIso8601String(),
-        'created_at': now.toIso8601String(),
-      });
+      // Intentar actualizar primero (por si ya existe)
+      final existing = await _supabase
+          .from('user_sessions')
+          .select('id')
+          .eq('user_id', userId)
+          .eq('device_info', deviceInfo)
+          .maybeSingle();
 
-      print('SessionManager: Session created for user $userId on $deviceInfo');
+      if (existing != null) {
+        // Actualizar sesión existente
+        await _supabase
+            .from('user_sessions')
+            .update({
+              'session_token': sessionToken,
+              'last_activity': now.toIso8601String(),
+            })
+            .eq('id', existing['id']);
+        print('SessionManager: Session updated for user $userId on $deviceInfo');
+      } else {
+        // Crear nueva sesión
+        await _supabase.from('user_sessions').insert({
+          'user_id': userId,
+          'session_token': sessionToken,
+          'device_info': deviceInfo,
+          'last_activity': now.toIso8601String(),
+          'created_at': now.toIso8601String(),
+        });
+        print('SessionManager: Session created for user $userId on $deviceInfo');
+      }
     } catch (e) {
       print('Error creating session: $e');
     }
@@ -112,14 +143,28 @@ class SessionManager {
         return;
       }
 
+      final deviceInfo = _getDeviceInfo();
       final now = DateTime.now();
-      await _supabase
-          .from('user_sessions')
-          .update({'last_activity': now.toIso8601String()})
-          .eq('user_id', userId)
-          .eq('session_token', sessionToken);
 
-      print('SessionManager: Session activity updated');
+      // Actualizar por device_info en lugar de session_token
+      // porque el token puede cambiar al renovarse
+      final result = await _supabase
+          .from('user_sessions')
+          .update({
+            'last_activity': now.toIso8601String(),
+            'session_token': sessionToken, // Actualizar token si cambió
+          })
+          .eq('user_id', userId)
+          .eq('device_info', deviceInfo)
+          .select();
+
+      if (result.isEmpty) {
+        // Si no se encontró, recrear la sesión
+        print('SessionManager: Session not found, recreating...');
+        await createSession();
+      } else {
+        print('SessionManager: Session activity updated');
+      }
     } catch (e) {
       print('Error updating session activity: $e');
     }
@@ -139,13 +184,21 @@ class SessionManager {
   /// Elimina la sesión actual al cerrar sesión
   static Future<void> removeCurrentSession() async {
     try {
-      final sessionToken = _supabase.auth.currentSession?.accessToken;
-      if (sessionToken != null) {
+      final userId = _supabase.auth.currentUser?.id;
+      
+      if (userId != null) {
+        final deviceInfo = _getDeviceInfo();
+        
+        // Eliminar por user_id y device_info (más confiable que token)
         await _supabase
             .from('user_sessions')
             .delete()
-            .eq('session_token', sessionToken);
-        print('SessionManager: Current session removed');
+            .eq('user_id', userId)
+            .eq('device_info', deviceInfo);
+        print('SessionManager: Current session removed for user $userId on $deviceInfo');
+        
+        // Limpiar el session ID
+        _sessionId = null;
       }
     } catch (e) {
       print('Error removing current session: $e');
@@ -157,20 +210,37 @@ class SessionManager {
   static Future<bool> isSessionValid() async {
     try {
       final userId = _supabase.auth.currentUser?.id;
-      final sessionToken = _supabase.auth.currentSession?.accessToken;
 
-      if (userId == null || sessionToken == null) {
+      if (userId == null) {
         return false;
       }
 
+      final deviceInfo = _getDeviceInfo();
+      
+      // Verificar por device_info en lugar de session_token
+      // porque el token se renueva automáticamente
       final response = await _supabase
           .from('user_sessions')
-          .select('id')
+          .select('id, session_token')
           .eq('user_id', userId)
-          .eq('session_token', sessionToken)
+          .eq('device_info', deviceInfo)
           .maybeSingle();
 
-      return response != null;
+      if (response == null) {
+        return false;
+      }
+
+      // Actualizar el token si cambió (por renovación automática)
+      final currentToken = _supabase.auth.currentSession?.accessToken;
+      if (currentToken != null && response['session_token'] != currentToken) {
+        await _supabase
+            .from('user_sessions')
+            .update({'session_token': currentToken})
+            .eq('id', response['id']);
+        print('SessionManager: Session token updated after refresh');
+      }
+
+      return true;
     } catch (e) {
       print('Error checking session validity: $e');
       return true; // En caso de error, asumir que es válida

@@ -113,4 +113,27 @@ class InterfaceLabels {
   String get editarPago => 'Editar $pago';
   String get detallesCobro => 'Detalles del $cobro';
   String get detallesPago => 'Detalles del $pago';
+  
+  // Labels para las tarjetas de totales en la pantalla principal
+  String get totalInvertidoLabel {
+    switch (preference) {
+      case InterfacePreference.prestamista:
+        return 'Total Invertido';
+      case InterfacePreference.personal:
+        return 'Total Ingresos';
+      case InterfacePreference.inversionista:
+        return 'Total de Activos';
+    }
+  }
+  
+  String get totalPagosLabel {
+    switch (preference) {
+      case InterfacePreference.prestamista:
+        return 'Total De Pagos';
+      case InterfacePreference.personal:
+        return 'Total Gastos';
+      case InterfacePreference.inversionista:
+        return 'Total de Pasivos';
+    }
+  }
 }
