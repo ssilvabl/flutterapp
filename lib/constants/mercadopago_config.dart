@@ -23,3 +23,4 @@ class MercadoPagoConfig {
   static const String failureUrl = 'sepagos://payment/failure'; 
   static const String pendingUrl = 'sepagos://payment/pending';
 }
+

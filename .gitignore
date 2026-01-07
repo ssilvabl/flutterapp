@@ -41,3 +41,19 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Android signing keys (NUNCA subir a Git)
+*.jks
+*.keystore
+key.properties
+upload-keystore.jks
+
+# Archivos de configuración sensibles
+.env
+.env.*
+!.env.example
+google-services.json
+GoogleService-Info.plist
+
+# Local configuration
+local.properties

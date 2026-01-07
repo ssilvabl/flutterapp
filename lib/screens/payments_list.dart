@@ -1412,8 +1412,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       final reductions = moves
           .where((m) => m.movementType == 'reduction')
           .fold(0.0, (s, m) => s + m.amount);
-
-      // Calcular el monto actual real: inicial + incrementos - reducciones
+      
+      // Calcular el monto actual real basado en los movimientos
       final amountVal = initial + increments - reductions;
 
       final doc = pw.Document();

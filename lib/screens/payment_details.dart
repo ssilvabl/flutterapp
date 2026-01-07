@@ -98,8 +98,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
   }
 
   double _sumByType(String type) => _moves.where((m) => m.movementType == type).fold(0.0, (s, m) => s + m.amount);
-
-  // Calcular el monto actual basado en los movimientos
+  
+  // Calcular el monto actual real basado en los movimientos
   double _calculateCurrentAmount() {
     final initial = _sumByType('initial');
     final increments = _sumByType('increment');
@@ -112,7 +112,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     final entity = widget.payment['entity']?.toString() ?? '';
     final profile = _profileName ?? '';
     
-    // Calcular el monto actual real basado en los movimientos
+    // Usar el cálculo real basado en movimientos, no el valor de la base de datos
     final amountVal = _calculateCurrentAmount();
 
     // Colores personalizados usando PdfColor del paquete pdf
@@ -149,7 +149,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                   pw.SizedBox(height: 4),
                   pw.Text(
                     'Factura - $entity',
-                    style: pw.TextStyle(
+                    style: const pw.TextStyle(
                       fontSize: 14,
                       color: PdfColors.white,
                     ),
@@ -272,7 +272,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                       ),
                     ],
                   );
-                }).toList(),
+                }),
               ],
             ),
             pw.SizedBox(height: 24),
@@ -422,6 +422,184 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     }
   }
 
+  Future<void> _editMovement(Movement movement) async {
+    String selectedType = movement.movementType;
+    DateTime selectedDate = movement.createdAt;
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Editar Movimiento'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Tipo de movimiento:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              DropdownButton<String>(
+                value: selectedType,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(value: 'initial', child: Text('Inicial')),
+                  DropdownMenuItem(value: 'increment', child: Text('Incremento')),
+                  DropdownMenuItem(value: 'reduction', child: Text('Reducción')),
+                ],
+                onChanged: (value) {
+                  if (value != null) {
+                    setDialogState(() => selectedType = value);
+                  }
+                },
+              ),
+              const SizedBox(height: 16),
+              const Text('Fecha:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              InkWell(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: selectedDate,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now().add(const Duration(days: 365)),
+                  );
+                  if (picked != null) {
+                    setDialogState(() => selectedDate = picked);
+                  }
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(_formatDate(selectedDate)),
+                      const Icon(Icons.calendar_today, size: 20),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Monto: \$${_formatAmount(movement.amount)}',
+                style: const TextStyle(fontSize: 14, color: Colors.grey),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.pop(ctx, {
+                  'type': selectedType,
+                  'date': selectedDate,
+                });
+              },
+              child: const Text('Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != null) {
+      await _updateMovement(
+        movement.id,
+        result['type'] as String,
+        result['date'] as DateTime,
+      );
+    }
+  }
+
+  Future<void> _updateMovement(String movementId, String newType, DateTime newDate) async {
+    try {
+      print('🔄 Actualizando movimiento: $movementId');
+      print('📝 Nuevo tipo: $newType');
+      print('📅 Nueva fecha: ${newDate.toIso8601String()}');
+      
+      final response = await _supabase.from('payments_movements').update({
+        'movement_type': newType,
+        'created_at': newDate.toIso8601String(),
+      }).eq('id', movementId).select();
+
+      print('✅ Respuesta de actualización: $response');
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Movimiento actualizado exitosamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      // Recargar movimientos manualmente para forzar actualización
+      await _loadMovements();
+    } catch (e) {
+      print('❌ Error al actualizar movimiento: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al actualizar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  Future<void> _confirmDeleteMovement(Movement movement) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar Movimiento'),
+        content: const Text('¿Estás seguro de que deseas eliminar este movimiento?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await _deleteMovement(movement.id);
+    }
+  }
+
+  Future<void> _deleteMovement(String movementId) async {
+    try {
+      await _supabase.from('payments_movements').delete().eq('id', movementId);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Movimiento eliminado exitosamente'),
+          backgroundColor: Colors.green,
+        ),
+      );
+
+      await _loadMovements();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error al eliminar: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -492,52 +670,74 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                 
                 // Definir color según el tipo de movimiento
                 Color amountColor;
-                Color backgroundColor;
-                IconData icon;
-                
+                Color? tileColor;
                 if (m.movementType == 'increment') {
                   amountColor = Colors.green.shade700;
-                  backgroundColor = Colors.green.shade50;
-                  icon = Icons.arrow_upward;
+                  tileColor = Colors.green.shade50;
                 } else if (m.movementType == 'reduction') {
                   amountColor = Colors.red.shade700;
-                  backgroundColor = Colors.red.shade50;
-                  icon = Icons.arrow_downward;
+                  tileColor = Colors.red.shade50;
                 } else {
                   // inicial
                   amountColor = Colors.blue.shade700;
-                  backgroundColor = Colors.blue.shade50;
-                  icon = Icons.monetization_on;
+                  tileColor = Colors.blue.shade50;
                 }
                 
-                return Container(
-                  margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
-                  decoration: BoxDecoration(
-                    color: backgroundColor,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: amountColor.withOpacity(0.3)),
+                return ListTile(
+                  tileColor: tileColor,
+                  title: Text(
+                    tipo,
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: amountColor,
+                    ),
                   ),
-                  child: ListTile(
-                    leading: Icon(icon, color: amountColor),
-                    title: Text(
-                      tipo,
-                      style: TextStyle(
-                        fontWeight: FontWeight.w600,
-                        color: amountColor,
+                  subtitle: Text(_formatDate(m.createdAt)),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '\$${_formatAmount(m.amount)}',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                          color: amountColor,
+                        ),
                       ),
-                    ),
-                    subtitle: Text(
-                      _formatDate(m.createdAt),
-                      style: TextStyle(color: Colors.grey.shade700),
-                    ),
-                    trailing: Text(
-                      '\$${_formatAmount(m.amount)}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                        color: amountColor,
+                      const SizedBox(width: 8),
+                      PopupMenuButton<String>(
+                        icon: const Icon(Icons.more_vert, size: 20),
+                        onSelected: (value) {
+                          if (value == 'edit') {
+                            _editMovement(m);
+                          } else if (value == 'delete') {
+                            _confirmDeleteMovement(m);
+                          }
+                        },
+                        itemBuilder: (context) => [
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 20),
+                                SizedBox(width: 8),
+                                Text('Editar'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 20, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Eliminar', style: TextStyle(color: Colors.red)),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ),
+                    ],
                   ),
                 );
               }
