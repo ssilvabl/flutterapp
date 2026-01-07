@@ -131,7 +131,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextFormField(
                       controller: _nameController,
                       decoration: InputDecoration(
-                        labelText: 'Name',
+                        labelText: 'Nombre completo',
                         filled: true,
                         fillColor: Colors.grey[300],
                         border: OutlineInputBorder(
@@ -147,7 +147,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextFormField(
                       controller: _emailController,
                       decoration: InputDecoration(
-                        labelText: 'Email',
+                        labelText: 'Correo electrónico',
                         filled: true,
                         fillColor: Colors.grey[300],
                         border: OutlineInputBorder(
@@ -168,7 +168,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextFormField(
                       controller: _passwordController,
                       decoration: InputDecoration(
-                        labelText: 'Password',
+                        labelText: 'Contraseña',
                         filled: true,
                         fillColor: Colors.grey[300],
                         border: OutlineInputBorder(
@@ -192,7 +192,7 @@ class _RegisterPageState extends State<RegisterPage> {
                     TextFormField(
                       controller: _confirmPasswordController,
                       decoration: InputDecoration(
-                        labelText: 'Confirm Password',
+                        labelText: 'Confirmar contraseña',
                         filled: true,
                         fillColor: Colors.grey[300],
                         border: OutlineInputBorder(
@@ -220,7 +220,14 @@ class _RegisterPageState extends State<RegisterPage> {
                       onPressed: _loading ? null : _signUp,
                       child: _loading
                           ? const CircularProgressIndicator()
-                          : const Text('Sign up'),
+                          : const Text('Registrarse'),
+                    ),
+                    const SizedBox(height: 12),
+                    Center(
+                      child: TextButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        child: const Text('¿Ya tienes cuenta? Inicia sesión'),
+                      ),
                     ),
                   ],
                 ),

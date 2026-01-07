@@ -50,7 +50,8 @@ class _ProfilePageState extends State<ProfilePage> {
           final roleStr = res['role'] as String? ?? 'free';
           _userRole = UserRoleExtension.fromString(roleStr);
           final prefStr = res['interface_preference'] as String?;
-          _interfacePreference = InterfacePreferenceExtension.fromString(prefStr);
+          _interfacePreference =
+              InterfacePreferenceExtension.fromString(prefStr);
         });
       }
     } catch (_) {}
@@ -77,7 +78,7 @@ class _ProfilePageState extends State<ProfilePage> {
     try {
       await Supabase.instance.client.from('profiles').upsert({
         'id': uid,
-        label == 'Name' ? 'full_name' : 'company': result,
+        label == 'Nombre' ? 'full_name' : 'company': result,
       });
       await _loadProfile();
     } catch (e) {
@@ -223,12 +224,12 @@ class _ProfilePageState extends State<ProfilePage> {
                                     .textTheme
                                     .headlineMedium)),
                         const SizedBox(height: 18),
-                        _buildField('Name', _fullName ?? ''),
+                        _buildField('Nombre', _fullName ?? ''),
                         const SizedBox(height: 12),
-                        _buildField('Email', _user!.email ?? '',
+                        _buildField('Correo electrónico', _user!.email ?? '',
                             editable: false),
                         const SizedBox(height: 12),
-                        _buildField('Password', '******', editable: false),
+                        _buildField('Contraseña', '******', editable: false),
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
@@ -272,8 +273,9 @@ class _ProfilePageState extends State<ProfilePage> {
         if (editable) ...[
           const SizedBox(width: 8),
           IconButton(
-              onPressed: () => _editField(label == 'Name' ? 'Name' : 'Company',
-                  label == 'Name' ? _fullName : _company),
+              onPressed: () => _editField(
+                  label == 'Nombre' ? 'Nombre' : 'Nombre Empresa',
+                  label == 'Nombre' ? _fullName : _company),
               icon: const Icon(Icons.edit_outlined)),
         ]
       ],
@@ -283,21 +285,23 @@ class _ProfilePageState extends State<ProfilePage> {
   Future<void> _updateInterfacePreference(InterfacePreference newPref) async {
     final uid = _user?.id;
     if (uid == null) return;
-    
+
     try {
       // Actualizar en el provider (esto hace el update en la BD y notifica a toda la app)
       final preferenceProvider = PreferenceInheritedWidget.of(context);
       if (preferenceProvider != null) {
         await preferenceProvider.updatePreference(newPref);
       }
-      
+
       setState(() {
         _interfacePreference = newPref;
       });
-      
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Preferencia actualizada - Los cambios se aplicaron en toda la app')),
+        const SnackBar(
+            content: Text(
+                'Preferencia actualizada - Los cambios se aplicaron en toda la app')),
       );
     } catch (e) {
       if (!mounted) return;

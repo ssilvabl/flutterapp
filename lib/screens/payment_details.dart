@@ -22,13 +22,20 @@ class Movement {
   final DateTime createdAt;
   final String? note;
 
-  Movement({required this.id, required this.movementType, required this.amount, required this.createdAt, this.note});
+  Movement(
+      {required this.id,
+      required this.movementType,
+      required this.amount,
+      required this.createdAt,
+      this.note});
 
   factory Movement.fromMap(Map<String, dynamic> m) {
     return Movement(
       id: m['id'].toString(),
       movementType: (m['movement_type'] ?? '').toString(),
-      amount: (m['amount'] != null) ? (double.tryParse(m['amount'].toString()) ?? 0.0) : 0.0,
+      amount: (m['amount'] != null)
+          ? (double.tryParse(m['amount'].toString()) ?? 0.0)
+          : 0.0,
       createdAt: DateTime.tryParse(m['created_at'] ?? '') ?? DateTime.now(),
       note: m['note'] as String?,
     );
@@ -54,8 +61,14 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     setState(() => _loading = true);
     try {
       final pid = widget.payment['id']?.toString();
-      final res = await _supabase.from('payments_movements').select().eq('payment_id', pid).order('created_at', ascending: true);
-      final List<Map<String, dynamic>> data = (res is List) ? List<Map<String, dynamic>>.from(res) : <Map<String, dynamic>>[];
+      final res = await _supabase
+          .from('payments_movements')
+          .select()
+          .eq('payment_id', pid)
+          .order('created_at', ascending: true);
+      final List<Map<String, dynamic>> data = (res is List)
+          ? List<Map<String, dynamic>>.from(res)
+          : <Map<String, dynamic>>[];
       setState(() => _moves = data.map((e) => Movement.fromMap(e)).toList());
     } catch (e) {
       if (!mounted) return;
@@ -68,7 +81,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid == null) return;
-      final res = await _supabase.from('profiles').select().eq('id', uid).maybeSingle();
+      final res =
+          await _supabase.from('profiles').select().eq('id', uid).maybeSingle();
       if (res != null) {
         setState(() => _profileName = res['company'] ?? res['full_name']);
       }
@@ -84,11 +98,11 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
         .eq('payment_id', pid)
         .order('created_at', ascending: true)
         .listen((data) {
-      if (!mounted) return;
-      setState(() {
-        _moves = data.map((e) => Movement.fromMap(e)).toList();
-      });
-    });
+          if (!mounted) return;
+          setState(() {
+            _moves = data.map((e) => Movement.fromMap(e)).toList();
+          });
+        });
   }
 
   @override
@@ -97,8 +111,10 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     super.dispose();
   }
 
-  double _sumByType(String type) => _moves.where((m) => m.movementType == type).fold(0.0, (s, m) => s + m.amount);
-  
+  double _sumByType(String type) => _moves
+      .where((m) => m.movementType == type)
+      .fold(0.0, (s, m) => s + m.amount);
+
   // Calcular el monto actual real basado en los movimientos
   double _calculateCurrentAmount() {
     final initial = _sumByType('initial');
@@ -111,7 +127,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     final pdf = pw.Document();
     final entity = widget.payment['entity']?.toString() ?? '';
     final profile = _profileName ?? '';
-    
+
     // Usar el cálculo real basado en movimientos, no el valor de la base de datos
     final amountVal = _calculateCurrentAmount();
 
@@ -235,11 +251,10 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                           : m.movementType == 'reduction'
                               ? 'Reducción'
                               : m.movementType;
-                  
+
                   // Color según el tipo
-                  final valorColor = m.movementType == 'reduction'
-                      ? redColor
-                      : greenColor;
+                  final valorColor =
+                      m.movementType == 'reduction' ? redColor : greenColor;
 
                   return pw.TableRow(
                     children: [
@@ -360,7 +375,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       ),
     );
 
-    await Printing.sharePdf(bytes: await pdf.save(), filename: 'factura_$entity.pdf');
+    await Printing.sharePdf(
+        bytes: await pdf.save(), filename: 'factura_$entity.pdf');
   }
 
   Future<void> _confirmDelete() async {
@@ -368,7 +384,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Confirmar eliminación'),
-        content: Text('¿Estás seguro de que deseas eliminar "${widget.payment['entity']}"?'),
+        content: Text(
+            '¿Estás seguro de que deseas eliminar "${widget.payment['entity']}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -393,7 +410,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     try {
       final userId = _supabase.auth.currentUser?.id;
       final paymentId = widget.payment['id']?.toString();
-      
+
       if (userId == null || paymentId == null) {
         throw Exception('No autorizado');
       }
@@ -405,7 +422,7 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
           .eq('user_id', userId);
 
       if (!mounted) return;
-      
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Pago eliminado exitosamente')),
       );
@@ -435,15 +452,18 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text('Tipo de movimiento:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('Tipo de movimiento:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               DropdownButton<String>(
                 value: selectedType,
                 isExpanded: true,
                 items: const [
                   DropdownMenuItem(value: 'initial', child: Text('Inicial')),
-                  DropdownMenuItem(value: 'increment', child: Text('Incremento')),
-                  DropdownMenuItem(value: 'reduction', child: Text('Reducción')),
+                  DropdownMenuItem(
+                      value: 'increment', child: Text('Incremento')),
+                  DropdownMenuItem(
+                      value: 'reduction', child: Text('Reducción')),
                 ],
                 onChanged: (value) {
                   if (value != null) {
@@ -452,7 +472,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                 },
               ),
               const SizedBox(height: 16),
-              const Text('Fecha:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text('Fecha:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),
               InkWell(
                 onTap: () async {
@@ -467,7 +488,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                   }
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  padding:
+                      const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
                   decoration: BoxDecoration(
                     border: Border.all(color: Colors.grey),
                     borderRadius: BorderRadius.circular(8),
@@ -516,16 +538,21 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     }
   }
 
-  Future<void> _updateMovement(String movementId, String newType, DateTime newDate) async {
+  Future<void> _updateMovement(
+      String movementId, String newType, DateTime newDate) async {
     try {
       print('🔄 Actualizando movimiento: $movementId');
       print('📝 Nuevo tipo: $newType');
       print('📅 Nueva fecha: ${newDate.toIso8601String()}');
-      
-      final response = await _supabase.from('payments_movements').update({
-        'movement_type': newType,
-        'created_at': newDate.toIso8601String(),
-      }).eq('id', movementId).select();
+
+      final response = await _supabase
+          .from('payments_movements')
+          .update({
+            'movement_type': newType,
+            'created_at': newDate.toIso8601String(),
+          })
+          .eq('id', movementId)
+          .select();
 
       print('✅ Respuesta de actualización: $response');
 
@@ -556,7 +583,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Eliminar Movimiento'),
-        content: const Text('¿Estás seguro de que deseas eliminar este movimiento?'),
+        content:
+            const Text('¿Estás seguro de que deseas eliminar este movimiento?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -614,7 +642,10 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                   id: widget.payment['id'].toString(),
                   entity: widget.payment['entity']?.toString() ?? '',
                   amount: (widget.payment['amount'] as num?)?.toDouble() ?? 0.0,
-                  createdAt: widget.payment['createdAt'] as DateTime? ?? DateTime.now(),
+                  currentAmount:
+                      (widget.payment['amount'] as num?)?.toDouble() ?? 0.0,
+                  createdAt: widget.payment['createdAt'] as DateTime? ??
+                      DateTime.now(),
                   endDate: widget.payment['endDate'] as DateTime?,
                   type: widget.payment['type']?.toString() ?? 'cobro',
                   description: widget.payment['description']?.toString(),
@@ -641,108 +672,126 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+          Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
+              style:
+                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          Text('Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
-          if ((widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '') ) != null) Text('Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
+          Text(
+              'Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
+          if ((widget.payment['endDate'] is DateTime
+                  ? widget.payment['endDate'] as DateTime
+                  : DateTime.tryParse(
+                      widget.payment['end_date']?.toString() ?? '')) !=
+              null)
+            Text(
+                'Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
           const SizedBox(height: 12),
           Text('Descripción: ${widget.payment['description'] ?? 'N/A'}'),
           const SizedBox(height: 16),
           Row(children: [
-            ElevatedButton.icon(onPressed: _loadMovements, icon: const Icon(Icons.refresh), label: const Text('Actualizar')),
+            ElevatedButton.icon(
+                onPressed: _loadMovements,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Actualizar')),
           ]),
           const SizedBox(height: 8),
-          const Text('Historial de Movimientos', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          const Text('Historial de Movimientos',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
-          _loading ? const Center(child: CircularProgressIndicator()) : Expanded(
-            child: _moves.isEmpty ? const Text('Sin movimientos') : ListView.separated(
-              itemCount: _moves.length,
-              separatorBuilder: (_,__) => const Divider(),
-              itemBuilder: (context, index) {
-                final m = _moves[index];
-                final tipo = m.movementType == 'initial'
-                    ? 'Inicial'
-                    : m.movementType == 'increment'
-                        ? 'Incremento'
-                        : m.movementType == 'reduction'
-                            ? 'Reducción'
-                            : m.movementType;
-                
-                // Definir color según el tipo de movimiento
-                Color amountColor;
-                Color? tileColor;
-                if (m.movementType == 'increment') {
-                  amountColor = Colors.green.shade700;
-                  tileColor = Colors.green.shade50;
-                } else if (m.movementType == 'reduction') {
-                  amountColor = Colors.red.shade700;
-                  tileColor = Colors.red.shade50;
-                } else {
-                  // inicial
-                  amountColor = Colors.blue.shade700;
-                  tileColor = Colors.blue.shade50;
-                }
-                
-                return ListTile(
-                  tileColor: tileColor,
-                  title: Text(
-                    tipo,
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      color: amountColor,
-                    ),
-                  ),
-                  subtitle: Text(_formatDate(m.createdAt)),
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '\$${_formatAmount(m.amount)}',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
-                          color: amountColor,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      PopupMenuButton<String>(
-                        icon: const Icon(Icons.more_vert, size: 20),
-                        onSelected: (value) {
-                          if (value == 'edit') {
-                            _editMovement(m);
-                          } else if (value == 'delete') {
-                            _confirmDeleteMovement(m);
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          const PopupMenuItem(
-                            value: 'edit',
-                            child: Row(
-                              children: [
-                                Icon(Icons.edit, size: 20),
-                                SizedBox(width: 8),
-                                Text('Editar'),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuItem(
-                            value: 'delete',
-                            child: Row(
-                              children: [
-                                Icon(Icons.delete, size: 20, color: Colors.red),
-                                SizedBox(width: 8),
-                                Text('Eliminar', style: TextStyle(color: Colors.red)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                );
-              }
-            )
-          ),
+          _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Expanded(
+                  child: _moves.isEmpty
+                      ? const Text('Sin movimientos')
+                      : ListView.separated(
+                          itemCount: _moves.length,
+                          separatorBuilder: (_, __) => const Divider(),
+                          itemBuilder: (context, index) {
+                            final m = _moves[index];
+                            final tipo = m.movementType == 'initial'
+                                ? 'Inicial'
+                                : m.movementType == 'increment'
+                                    ? 'Incremento'
+                                    : m.movementType == 'reduction'
+                                        ? 'Reducción'
+                                        : m.movementType;
+
+                            // Definir color según el tipo de movimiento
+                            Color amountColor;
+                            Color? tileColor;
+                            if (m.movementType == 'increment') {
+                              amountColor = Colors.green.shade700;
+                              tileColor = Colors.green.shade50;
+                            } else if (m.movementType == 'reduction') {
+                              amountColor = Colors.red.shade700;
+                              tileColor = Colors.red.shade50;
+                            } else {
+                              // inicial
+                              amountColor = Colors.blue.shade700;
+                              tileColor = Colors.blue.shade50;
+                            }
+
+                            return ListTile(
+                              tileColor: tileColor,
+                              title: Text(
+                                tipo,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: amountColor,
+                                ),
+                              ),
+                              subtitle: Text(_formatDate(m.createdAt)),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    '\$${_formatAmount(m.amount)}',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                      color: amountColor,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  PopupMenuButton<String>(
+                                    icon: const Icon(Icons.more_vert, size: 20),
+                                    onSelected: (value) {
+                                      if (value == 'edit') {
+                                        _editMovement(m);
+                                      } else if (value == 'delete') {
+                                        _confirmDeleteMovement(m);
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem(
+                                        value: 'edit',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.edit, size: 20),
+                                            SizedBox(width: 8),
+                                            Text('Editar'),
+                                          ],
+                                        ),
+                                      ),
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.delete,
+                                                size: 20, color: Colors.red),
+                                            SizedBox(width: 8),
+                                            Text('Eliminar',
+                                                style: TextStyle(
+                                                    color: Colors.red)),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            );
+                          })),
         ]),
       ),
     );

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../utils/error_messages.dart';
 import '../utils/session_manager.dart';
 import '../utils/interface_labels.dart';
@@ -25,7 +26,8 @@ class PaymentsListPage extends StatefulWidget {
 class Payment {
   final String id;
   final String entity;
-  final double amount;
+  final double amount; // Monto inicial
+  double currentAmount; // Monto actual calculado desde movimientos
   final DateTime createdAt;
   final DateTime? endDate;
   final String type;
@@ -35,18 +37,21 @@ class Payment {
       {required this.id,
       required this.entity,
       required this.amount,
+      required this.currentAmount,
       required this.createdAt,
       this.endDate,
       required this.type,
       this.description});
 
   factory Payment.fromMap(Map<String, dynamic> m) {
+    final amt = (m['amount'] != null)
+        ? (double.tryParse(m['amount'].toString()) ?? 0.0)
+        : 0.0;
     return Payment(
       id: m['id'].toString(),
       entity: m['entity_name'] ?? '',
-      amount: (m['amount'] != null)
-          ? (double.tryParse(m['amount'].toString()) ?? 0.0)
-          : 0.0,
+      amount: amt,
+      currentAmount: amt, // Se actualizará después
       createdAt: DateTime.tryParse(m['created_at'] ?? '') ?? DateTime.now(),
       endDate: m['end_date'] != null
           ? DateTime.tryParse(m['end_date'] is String
@@ -64,17 +69,23 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   List<Payment> _items = [];
   List<Payment> _filteredItems = [];
   bool _loading = false;
+  bool _loadingMore = false;
   int _page = 0;
-  final int _pageSize = 5;
+  final int _pageSize = 10;
 
   final TextEditingController _searchController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
   String _filterType = 'all'; // 'all' | 'cobro' | 'pago'
+  String _sortOrder =
+      'date_desc'; // 'date_desc', 'date_asc', 'alpha', 'amount_desc', 'amount_asc'
   double _totalCobros = 0.0;
   double _totalPagos = 0.0;
   int _totalCount = 0;
+  int _totalCountDB = 0; // Conteo total en DB
   bool _hasMoreItems = true;
 
   StreamSubscription<List<Map<String, dynamic>>>? _paymentsSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _movementsSub;
   String? _profileName;
   UserRole _userRole = UserRole.free;
   bool _canAddTransactions = true;
@@ -98,16 +109,17 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       });
       return;
     }
-    
+
+    // Setup scroll infinito
+    _scrollController.addListener(_onScroll);
+
     // Cargar datos en paralelo para mejorar rendimiento
     _initializeData();
     _startSessionValidation();
-    
-    // Nota: Removimos el stream en tiempo real para respetar la paginación.
-    // Los datos se actualizarán cuando el usuario agregue/edite/elimine registros
-    // o cuando haga pull-to-refresh.
+    _setupRealtime(); // Habilitar tiempo real
+    _loadSortPreference(); // Cargar preferencia de ordenamiento
   }
-  
+
   // Inicializar todos los datos en paralelo
   Future<void> _initializeData() async {
     await Future.wait([
@@ -121,25 +133,105 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid == null) return;
-      
+
       final res = await _supabase
           .from('profiles')
           .select('company, full_name, role')
           .eq('id', uid)
           .maybeSingle();
-      
+
       if (res != null) {
         setState(() {
           _profileName = res['company'] ?? res['full_name'];
           final roleStr = res['role'] as String? ?? 'free';
           _userRole = UserRoleExtension.fromString(roleStr);
         });
-        
+
         // Verificar límite de transacciones
         await _checkTransactionLimit();
       }
     } catch (e) {
       print('Error loading profile and role: $e');
+    }
+  }
+
+  // Setup tiempo real para payments y movements
+  void _setupRealtime() {
+    final uid = _userId;
+    if (uid == null) return;
+
+    // Suscribirse a cambios en payments
+    _paymentsSub = _supabase
+        .from('payments')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .listen((data) async {
+          if (!mounted) return;
+          print('🔄 Actualización en tiempo real: ${data.length} registros');
+
+          // Convertir datos y calcular montos actuales
+          final payments = data.map((e) => Payment.fromMap(e)).toList();
+          await _calculateCurrentAmounts(payments);
+
+          setState(() {
+            _items = payments;
+          });
+          _applyFilter();
+        });
+
+    // Suscribirse a cambios en movements para actualizar montos
+    _movementsSub = _supabase
+        .from('payments_movements')
+        .stream(primaryKey: ['id'])
+        .eq('user_id', uid)
+        .listen((data) async {
+          if (!mounted) return;
+          print('📊 Actualización de movimientos en tiempo real');
+
+          // Recalcular montos actuales de todos los pagos
+          await _calculateCurrentAmounts(_items);
+          setState(() {});
+          _applyFilter();
+        });
+  }
+
+  // Calcular montos actuales basados en movimientos
+  Future<void> _calculateCurrentAmounts(List<Payment> payments) async {
+    for (final payment in payments) {
+      try {
+        final movesRes = await _supabase
+            .from('payments_movements')
+            .select()
+            .eq('payment_id', payment.id)
+            .order('created_at', ascending: true);
+
+        final List<Map<String, dynamic>> movesData =
+            (movesRes is List) ? List<Map<String, dynamic>>.from(movesRes) : [];
+
+        double initial = 0.0;
+        double increments = 0.0;
+        double reductions = 0.0;
+
+        for (final move in movesData) {
+          final type = move['movement_type'] as String? ?? '';
+          final amount = (move['amount'] != null)
+              ? (double.tryParse(move['amount'].toString()) ?? 0.0)
+              : 0.0;
+
+          if (type == 'initial') {
+            initial += amount;
+          } else if (type == 'increment') {
+            increments += amount;
+          } else if (type == 'reduction') {
+            reductions += amount;
+          }
+        }
+
+        payment.currentAmount = initial + increments - reductions;
+      } catch (e) {
+        print('Error calculando monto actual para ${payment.id}: $e');
+        payment.currentAmount = payment.amount;
+      }
     }
   }
 
@@ -157,31 +249,57 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   Future<void> _fetch({bool next = false}) async {
     if (next) {
+      if (_loadingMore || !_hasMoreItems) return;
+      setState(() => _loadingMore = true);
       _page++;
     } else {
       _page = 0;
+      setState(() => _loading = true);
     }
-    setState(() => _loading = true);
+
     final from = _page * _pageSize;
     try {
       if (_userId == null) {
-        setState(() => _loading = false);
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
         return;
       }
+
+      // Obtener conteo total primero
+      if (!next) {
+        try {
+          final countRes = await _supabase
+              .from('payments')
+              .select('id', const FetchOptions(count: CountOption.exact))
+              .eq('user_id', _userId);
+          _totalCountDB = countRes.count ?? 0;
+        } catch (e) {
+          print('Error obteniendo conteo: $e');
+          _totalCountDB = 0;
+        }
+      }
+
+      // Obtener registros paginados
       final res = await _supabase
           .from('payments')
           .select()
           .eq('user_id', _userId)
           .order('created_at', ascending: false)
           .range(from, from + _pageSize - 1);
+
       final List<Map<String, dynamic>> data = (res is List)
           ? List<Map<String, dynamic>>.from(res)
           : <Map<String, dynamic>>[];
       final items = data.map((e) => Payment.fromMap(e)).toList();
-      
+
+      // Calcular montos actuales
+      await _calculateCurrentAmounts(items);
+
       // Detectar si hay más items disponibles
       _hasMoreItems = items.length >= _pageSize;
-      
+
       if (next) {
         // Append only items that are not already present to avoid duplicates
         final existingIds = _items.map((e) => e.id).toSet();
@@ -192,7 +310,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         // Replace on fresh load
         setState(() => _items = items);
       }
-      
+
       // Aplicar filtros después de actualizar items
       _applyFilter();
     } catch (e) {
@@ -201,7 +319,12 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           friendlySupabaseMessage(e, fallback: 'No se pudo cargar los pagos');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
     }
   }
 
@@ -209,18 +332,49 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   void dispose() {
     _sessionCheckTimer?.cancel();
     _paymentsSub?.cancel();
+    _movementsSub?.cancel();
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
+  }
+
+  // Scroll infinito
+  void _onScroll() {
+    if (_loadingMore || !_hasMoreItems) return;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    final currentScroll = _scrollController.position.pixels;
+    if (currentScroll >= maxScroll * 0.8) {
+      _fetch(next: true);
+    }
+  }
+
+  // Cargar preferencia de ordenamiento
+  Future<void> _loadSortPreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _sortOrder = prefs.getString('sort_order') ?? 'date_desc';
+    });
+  }
+
+  // Guardar preferencia de ordenamiento
+  Future<void> _saveSortPreference(String order) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('sort_order', order);
+    setState(() {
+      _sortOrder = order;
+    });
+    _applyFilter();
   }
 
   Future<void> _checkTransactionLimit() async {
     try {
       final uid = Supabase.instance.client.auth.currentUser?.id;
       if (uid == null) return;
-      
+
       final roleStr = _userRole.toString().split('.').last;
-      final limitResult = await SessionManager.checkTransactionLimit(uid, roleStr);
-      
+      final limitResult =
+          await SessionManager.checkTransactionLimit(uid, roleStr);
+
       setState(() {
         _canAddTransactions = limitResult.canAdd;
         _currentTransactionCount = limitResult.currentCount;
@@ -234,7 +388,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   /// Inicia la verificación periódica de validez de sesión
   void _startSessionValidation() {
     // Verificar cada 60 segundos (optimizado para mejor rendimiento)
-    _sessionCheckTimer = Timer.periodic(const Duration(seconds: 60), (timer) async {
+    _sessionCheckTimer =
+        Timer.periodic(const Duration(seconds: 60), (timer) async {
       if (!mounted) {
         timer.cancel();
         return;
@@ -253,15 +408,15 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   Future<void> _handleSessionInvalidated() async {
     // Cerrar sesión localmente
     await Supabase.instance.client.auth.signOut();
-    
+
     if (!mounted) return;
-    
+
     // Mostrar mensaje y redirigir al login
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginPage()),
       (route) => false,
     );
-    
+
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Tu sesión ha sido cerrada desde otro dispositivo'),
@@ -281,7 +436,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           .eq('user_id', _userId);
       setState(() => _items.removeWhere((i) => i.id == id));
       _applyFilter();
-      
+
       // Actualizar el límite de transacciones después de eliminar
       await _checkTransactionLimit();
     } catch (e) {
@@ -298,10 +453,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         'Cerrar sesión', '¿Estás seguro que deseas cerrar sesión?');
     if (ok != true) return;
     setState(() => _loading = true);
-    
+
     // Eliminar la sesión actual antes de cerrar sesión
     await SessionManager.removeCurrentSession();
-    
+
     await Supabase.instance.client.auth.signOut();
     if (!mounted) return;
     setState(() => _loading = false);
@@ -313,7 +468,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   Future<void> _showEditDialog({Payment? p}) async {
     // Obtener labels del provider
     final preferenceProvider = PreferenceInheritedWidget.of(context);
-    final labels = preferenceProvider?.labels ?? InterfaceLabels(InterfacePreference.prestamista);
+    final labels = preferenceProvider?.labels ??
+        InterfaceLabels(InterfacePreference.prestamista);
     final entityCtrl = TextEditingController(text: p?.entity ?? '');
     // For creation: amountCtrl = absolute amount; for edit: amountCtrl = delta to apply
     final amountCtrl = TextEditingController(text: p == null ? '' : '');
@@ -332,9 +488,13 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       context: context,
       builder: (_) => StatefulBuilder(builder: (context, setStateDialog) {
         return AlertDialog(
-          title: Text(p == null 
-            ? (type == 'cobro' ? 'Agregar ${labels.cobro}' : 'Agregar ${labels.pago}')
-            : (type == 'cobro' ? 'Editar ${labels.cobro}' : 'Editar ${labels.pago}')),
+          title: Text(p == null
+              ? (type == 'cobro'
+                  ? 'Agregar ${labels.cobro}'
+                  : 'Agregar ${labels.pago}')
+              : (type == 'cobro'
+                  ? 'Editar ${labels.cobro}'
+                  : 'Editar ${labels.pago}')),
           content: Form(
             key: formKey,
             child: SingleChildScrollView(
@@ -450,7 +610,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                   DropdownButtonFormField<String>(
                     value: type,
                     items: [
-                      DropdownMenuItem(value: 'cobro', child: Text(labels.cobro)),
+                      DropdownMenuItem(
+                          value: 'cobro', child: Text(labels.cobro)),
                       DropdownMenuItem(value: 'pago', child: Text(labels.pago)),
                     ],
                     onChanged: (v) => type = v ?? 'cobro',
@@ -528,7 +689,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       _page = 0;
       _items.clear();
       await _fetch();
-      
+
       // Actualizar el límite de transacciones después de agregar/editar
       await _checkTransactionLimit();
     }
@@ -568,8 +729,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
       if (mounted) {
         final labels = PreferenceInheritedWidget.watch(context).labels;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} agregado' : '${labels.pago} agregado')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(type == 'cobro'
+                ? '${labels.cobro} agregado'
+                : '${labels.pago} agregado')));
       }
     } catch (e) {
       if (!mounted) return;
@@ -631,8 +794,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
       if (mounted) {
         final labels = PreferenceInheritedWidget.watch(context).labels;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(type == 'cobro' ? '${labels.cobro} actualizado' : '${labels.pago} actualizado')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(type == 'cobro'
+                ? '${labels.cobro} actualizado'
+                : '${labels.pago} actualizado')));
       }
     } catch (e) {
       if (!mounted) return;
@@ -649,11 +814,36 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     // Obtener labels del provider
     final preferenceProvider = PreferenceInheritedWidget.watch(context);
     final labels = preferenceProvider.labels;
-    
+
     return Scaffold(
       appBar: AppBar(
-          title: Text('Lista de ${labels.pagos} / ${labels.cobros}'),
-          automaticallyImplyLeading: true),
+        title: Text('Lista de ${labels.pagos} / ${labels.cobros}'),
+        automaticallyImplyLeading: true,
+        actions: [
+          if (_profileName != null && _profileName!.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                child: Center(
+                  child: Text(
+                    _profileName!,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
       drawer: Drawer(
         child: Column(
           children: [
@@ -733,277 +923,276 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                         ],
                       )
                     : ListView.separated(
+                        controller: _scrollController,
                         physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _filteredItems.length,
+                        itemCount:
+                            _filteredItems.length + (_loadingMore ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 12),
                         itemBuilder: (context, index) {
+                          // Mostrar indicador de carga al final
+                          if (index == _filteredItems.length) {
+                            return const Center(
+                              child: Padding(
+                                padding: EdgeInsets.all(16.0),
+                                child: CircularProgressIndicator(),
+                              ),
+                            );
+                          }
+
                           final it = _filteredItems[index];
                           final screenWidth = MediaQuery.of(context).size.width;
                           final showPopupActions = screenWidth < 600;
-                          return Row(
-                            children: [
-                              Expanded(
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 12, vertical: 16),
-                                  decoration: BoxDecoration(
-                                      color: Colors.black87,
-                                      borderRadius: BorderRadius.circular(10)),
-                                  child: LayoutBuilder(builder: (ctx, c) {
-                                    final narrow = c.maxWidth < 520;
-                                    if (narrow) {
-                                      return Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Row(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
-                                            children: [
-                                              Expanded(
-                                                child: GestureDetector(
-                                                  onTap: () async {
-                                                    await Navigator.of(context)
-                                                        .push(MaterialPageRoute(
-                                                            builder: (_) =>
-                                                                PaymentDetailsPage(
-                                                                    payment: {
-                                                                      'id': it.id,
-                                                                      'entity': it.entity,
-                                                                      'amount': it.amount,
-                                                                      'createdAt':
-                                                                          it.createdAt,
-                                                                      'endDate':
-                                                                          it.endDate,
-                                                                      'type': it.type,
-                                                                      'description':
-                                                                          it.description,
-                                                                    },
-                                                                    onEdit: (payment) async {
-                                                                      await _showEditDialog(p: payment);
-                                                                    })));
-                                                  },
+
+                          return GestureDetector(
+                            onTap: () async {
+                              await Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => PaymentDetailsPage(
+                                    payment: {
+                                      'id': it.id,
+                                      'entity': it.entity,
+                                      'amount': it.currentAmount,
+                                      'createdAt': it.createdAt,
+                                      'endDate': it.endDate,
+                                      'type': it.type,
+                                      'description': it.description,
+                                    },
+                                    onEdit: (payment) async {
+                                      await _showEditDialog(p: payment);
+                                    },
+                                  ),
+                                ),
+                              );
+                            },
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 16),
+                                    decoration: BoxDecoration(
+                                        color: Colors.black87,
+                                        borderRadius:
+                                            BorderRadius.circular(10)),
+                                    child: LayoutBuilder(builder: (ctx, c) {
+                                      final narrow = c.maxWidth < 520;
+                                      if (narrow) {
+                                        return Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Row(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                Expanded(
                                                   child: Text(
                                                     it.entity,
                                                     style: const TextStyle(
-                                                        color: Colors.white,
-                                                        decoration: TextDecoration.underline),
+                                                        color: Colors.white),
                                                     maxLines: 2,
                                                     overflow:
                                                         TextOverflow.ellipsis,
                                                   ),
                                                 ),
-                                              ),
-                                              const SizedBox(width: 8),
-                                              ConstrainedBox(
-                                                  constraints:
-                                                      const BoxConstraints(
-                                                          minWidth: 60),
-                                                  child: Text(
-                                                      '\$${_formatAmount(it.amount)}',
-                                                      style: const TextStyle(
-                                                          color: Colors.white),
-                                                      textAlign:
-                                                          TextAlign.right)),
+                                                const SizedBox(width: 8),
+                                                ConstrainedBox(
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            minWidth: 60),
+                                                    child: Text(
+                                                        '\$${_formatAmount(it.currentAmount)}',
+                                                        style: const TextStyle(
+                                                            color:
+                                                                Colors.white),
+                                                        textAlign:
+                                                            TextAlign.right)),
+                                              ],
+                                            ),
+                                            if (it.endDate != null) ...[
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                  'Vence: ${_formatDate(it.endDate!)}',
+                                                  style: const TextStyle(
+                                                      color: Colors.white70,
+                                                      fontSize: 12),
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis),
                                             ],
-                                          ),
-                                          if (it.endDate != null) ...[
-                                            const SizedBox(height: 6),
-                                            Text(
-                                                'Vence: ${_formatDate(it.endDate!)}',
-                                                style: const TextStyle(
-                                                    color: Colors.white70,
-                                                    fontSize: 12),
-                                                maxLines: 1,
-                                                overflow:
-                                                    TextOverflow.ellipsis),
                                           ],
-                                        ],
-                                      );
-                                    }
+                                        );
+                                      }
 
-                                    // Wide layout: keep items on one row but allow wrapping of text
-                                    return Row(
-                                      children: [
-                                        Expanded(
-                                          child: Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Expanded(
-                                                child: Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: [
-                                                    GestureDetector(
-                                                      onTap: () async {
-                                                        await Navigator.of(context)
-                                                            .push(MaterialPageRoute(
-                                                                builder: (_) =>
-                                                                    PaymentDetailsPage(
-                                                                        payment: {
-                                                                          'id': it.id,
-                                                                          'entity': it.entity,
-                                                                          'amount': it.amount,
-                                                                          'createdAt':
-                                                                              it.createdAt,
-                                                                          'endDate':
-                                                                              it.endDate,
-                                                                          'type': it.type,
-                                                                          'description':
-                                                                              it.description,
-                                                                        },
-                                                                        onEdit: (payment) async {
-                                                                          await _showEditDialog(p: payment);
-                                                                        })));
-                                                      },
-                                                      child: Text(it.entity,
-                                                          style: const TextStyle(
-                                                              color:
-                                                                  Colors.white,
-                                                              decoration: TextDecoration.underline),
-                                                          maxLines: 2,
-                                                          overflow: TextOverflow
-                                                              .ellipsis),
-                                                    ),
-                                                    if (it.endDate != null)
-                                                      Text(
-                                                          'Vence: ${_formatDate(it.endDate!)}',
+                                      // Wide layout: keep items on one row but allow wrapping of text
+                                      return Row(
+                                        children: [
+                                          Expanded(
+                                            child: Row(
+                                              mainAxisAlignment:
+                                                  MainAxisAlignment
+                                                      .spaceBetween,
+                                              children: [
+                                                Expanded(
+                                                  child: Column(
+                                                    crossAxisAlignment:
+                                                        CrossAxisAlignment
+                                                            .start,
+                                                    children: [
+                                                      Text(it.entity,
                                                           style:
                                                               const TextStyle(
                                                                   color: Colors
-                                                                      .white70,
-                                                                  fontSize: 12),
-                                                          maxLines: 1,
+                                                                      .white),
+                                                          maxLines: 2,
                                                           overflow: TextOverflow
                                                               .ellipsis),
-                                                  ],
+                                                      if (it.endDate != null)
+                                                        Text(
+                                                            'Vence: ${_formatDate(it.endDate!)}',
+                                                            style: const TextStyle(
+                                                                color: Colors
+                                                                    .white70,
+                                                                fontSize: 12),
+                                                            maxLines: 1,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis),
+                                                    ],
+                                                  ),
                                                 ),
-                                              ),
-                                              ConstrainedBox(
-                                                  constraints:
-                                                      const BoxConstraints(
-                                                          minWidth: 60),
-                                                  child: Text(
-                                                      '\$${_formatAmount(it.amount)}',
-                                                      style: const TextStyle(
-                                                          color: Colors.white),
-                                                      textAlign:
-                                                          TextAlign.right)),
-                                            ],
+                                                ConstrainedBox(
+                                                    constraints:
+                                                        const BoxConstraints(
+                                                            minWidth: 60),
+                                                    child: Text(
+                                                        '\$${_formatAmount(it.currentAmount)}',
+                                                        style: const TextStyle(
+                                                            color:
+                                                                Colors.white),
+                                                        textAlign:
+                                                            TextAlign.right)),
+                                              ],
+                                            ),
                                           ),
-                                        ),
-                                      ],
-                                    );
-                                  }),
+                                        ],
+                                      );
+                                    }),
+                                  ),
                                 ),
-                              ),
-                              const SizedBox(width: 12),
-                              // Acciones externas: popup en chico, fila completa en ancho
-                              showPopupActions
-                                  ? PopupMenuButton<String>(
-                                      onSelected: (v) async {
-                                        if (v == 'delete') {
-                                          await _confirmDelete(it.id);
-                                          return;
-                                        }
-                                        if (v == 'edit') {
-                                          await _showEditDialog(p: it);
-                                          return;
-                                        }
-                                        if (v == 'details') {
-                                          await Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                  builder: (_) =>
-                                                      PaymentDetailsPage(
-                                                          payment: {
-                                                            'id': it.id,
-                                                            'entity': it.entity,
-                                                            'amount': it.amount,
-                                                            'createdAt':
-                                                                it.createdAt,
-                                                            'endDate':
-                                                                it.endDate,
-                                                            'type': it.type,
-                                                            'description':
-                                                                it.description,
-                                                          },
-                                                          onEdit: (payment) async {
-                                                            await _showEditDialog(p: payment);
-                                                          })));
-                                          return;
-                                        }
-                                      },
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(
-                                            value: 'details',
-                                            child: Text('Detalles')),
-                                        PopupMenuItem(
-                                            value: 'edit',
-                                            child: Text('Editar')),
-                                        PopupMenuItem(
-                                            value: 'delete',
-                                            child: Text('Eliminar',
-                                                style: TextStyle(
-                                                    color: Colors.red))),
-                                      ],
-                                    )
-                                  : Row(
-                                      children: [
-                                        IconButton(
-                                          icon: const Icon(Icons.delete_outline,
-                                              color: Colors.red, size: 32),
-                                          onPressed: () =>
-                                              _confirmDelete(it.id),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.edit_outlined,
-                                              color: Colors.black, size: 28),
-                                          onPressed: () =>
-                                              _showEditDialog(p: it),
-                                        ),
-                                        IconButton(
-                                          icon: const Icon(Icons.info_outline,
-                                              color: Colors.blue, size: 28),
-                                          tooltip: 'Detalles',
-                                          onPressed: () async {
-                                            await Navigator.of(context)
-                                                .push(MaterialPageRoute(
+                                const SizedBox(width: 12),
+                                // Acciones externas: popup en chico, fila completa en ancho
+                                showPopupActions
+                                    ? PopupMenuButton<String>(
+                                        onSelected: (v) async {
+                                          if (v == 'delete') {
+                                            await _confirmDelete(it.id);
+                                            return;
+                                          }
+                                          if (v == 'edit') {
+                                            await _showEditDialog(p: it);
+                                            return;
+                                          }
+                                          if (v == 'details') {
+                                            await Navigator.of(context).push(
+                                                MaterialPageRoute(
                                                     builder: (_) =>
                                                         PaymentDetailsPage(
                                                             payment: {
                                                               'id': it.id,
-                                                              'entity': it.entity,
-                                                              'amount': it.amount,
+                                                              'entity':
+                                                                  it.entity,
+                                                              'amount': it
+                                                                  .currentAmount,
                                                               'createdAt':
                                                                   it.createdAt,
                                                               'endDate':
                                                                   it.endDate,
                                                               'type': it.type,
-                                                              'description':
-                                                                  it.description,
+                                                              'description': it
+                                                                  .description,
                                                             },
-                                                            onEdit: (payment) async {
-                                                              await _showEditDialog(p: payment);
+                                                            onEdit:
+                                                                (payment) async {
+                                                              await _showEditDialog(
+                                                                  p: payment);
                                                             })));
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                            ],
+                                            return;
+                                          }
+                                        },
+                                        itemBuilder: (_) => const [
+                                          PopupMenuItem(
+                                              value: 'details',
+                                              child: Text('Detalles')),
+                                          PopupMenuItem(
+                                              value: 'edit',
+                                              child: Text('Editar')),
+                                          PopupMenuItem(
+                                              value: 'delete',
+                                              child: Text('Eliminar',
+                                                  style: TextStyle(
+                                                      color: Colors.red))),
+                                        ],
+                                      )
+                                    : Row(
+                                        children: [
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.delete_outline,
+                                                color: Colors.red,
+                                                size: 32),
+                                            onPressed: () =>
+                                                _confirmDelete(it.id),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.edit_outlined,
+                                                color: Colors.black,
+                                                size: 28),
+                                            onPressed: () =>
+                                                _showEditDialog(p: it),
+                                          ),
+                                          IconButton(
+                                            icon: const Icon(Icons.info_outline,
+                                                color: Colors.blue, size: 28),
+                                            tooltip: 'Detalles',
+                                            onPressed: () async {
+                                              await Navigator.of(context).push(
+                                                  MaterialPageRoute(
+                                                      builder: (_) =>
+                                                          PaymentDetailsPage(
+                                                              payment: {
+                                                                'id': it.id,
+                                                                'entity':
+                                                                    it.entity,
+                                                                'amount': it
+                                                                    .currentAmount,
+                                                                'createdAt': it
+                                                                    .createdAt,
+                                                                'endDate':
+                                                                    it.endDate,
+                                                                'type': it.type,
+                                                                'description': it
+                                                                    .description,
+                                                              },
+                                                              onEdit:
+                                                                  (payment) async {
+                                                                await _showEditDialog(
+                                                                    p: payment);
+                                                              })));
+                                            },
+                                          ),
+                                        ],
+                                      ),
+                              ],
+                            ),
                           );
                         },
                       ),
               ),
             ),
-            if (_loading) const CircularProgressIndicator(),
-            const SizedBox(height: 12),
-            _searchController.text.trim().isEmpty && _hasMoreItems && _items.length >= _pageSize
-                ? ElevatedButton(
-                    onPressed: _loading ? null : () => _fetch(next: true),
-                    child: const Text('Ver Más'),
-                  )
-                : const SizedBox.shrink()
+            if (_loading && _page == 0) const CircularProgressIndicator(),
+            const SizedBox(height: 12)
           ],
         ),
       ),
@@ -1056,13 +1245,12 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   Future<void> _applyFilter() async {
     final q = _searchController.text.trim();
 
-    // If there's a search query, perform server-side search so results show even if not paged locally
+    // If there's a search query, perform server-side search
     if (q.isNotEmpty) {
       try {
         if (_userId == null) return;
         setState(() => _loading = true);
         final escaped = q.replaceAll('%', '\\%');
-        // Búsqueda case-insensitive en nombre y descripción
         final res = await _supabase
             .from('payments')
             .select()
@@ -1073,6 +1261,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             ? List<Map<String, dynamic>>.from(res)
             : <Map<String, dynamic>>[];
         _filteredItems = data.map((e) => Payment.fromMap(e)).toList();
+        await _calculateCurrentAmounts(_filteredItems);
       } catch (e) {
         if (!mounted) return;
         final msg = friendlySupabaseMessage(e, fallback: 'Error al buscar');
@@ -1083,7 +1272,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         if (mounted) setState(() => _loading = false);
       }
     } else {
-      // local filter
       _filteredItems = [..._items];
     }
 
@@ -1093,15 +1281,36 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           _filteredItems.where((p) => p.type == _filterType).toList();
     }
 
-    // Recalculate totals
+    // Apply sort order
+    switch (_sortOrder) {
+      case 'date_desc':
+        _filteredItems.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        break;
+      case 'date_asc':
+        _filteredItems.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+        break;
+      case 'alpha':
+        _filteredItems.sort(
+            (a, b) => a.entity.toLowerCase().compareTo(b.entity.toLowerCase()));
+        break;
+      case 'amount_desc':
+        _filteredItems
+            .sort((a, b) => b.currentAmount.compareTo(a.currentAmount));
+        break;
+      case 'amount_asc':
+        _filteredItems
+            .sort((a, b) => a.currentAmount.compareTo(b.currentAmount));
+        break;
+    }
+
+    // Recalculate totals usando currentAmount
     _totalCobros = _filteredItems
         .where((p) => p.type == 'cobro')
-        .fold(0.0, (s, p) => s + p.amount);
+        .fold(0.0, (s, p) => s + p.currentAmount);
     _totalPagos = _filteredItems
         .where((p) => p.type == 'pago')
-        .fold(0.0, (s, p) => s + p.amount);
+        .fold(0.0, (s, p) => s + p.currentAmount);
 
-    // count
     _totalCount = _filteredItems.length;
 
     if (mounted) setState(() {});
@@ -1109,138 +1318,128 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   Widget _buildTopControls(bool wide, double maxWidth, InterfaceLabels labels) {
     if (wide) {
-      return Row(
+      return Column(
         children: [
-          // Search bar (left)
-          Expanded(
-            flex: 4,
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Buscar...',
-                prefixIcon: const Icon(Icons.search),
-                filled: true,
-                fillColor: Colors.white,
-                border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(20),
-                    borderSide: BorderSide.none),
-                contentPadding:
-                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              ),
-              onChanged: (v) {
-                _applyFilter();
-              },
-            ),
-          ),
-          const SizedBox(width: 12),
-
-          // Add button (center) - with transaction limit check
-          Column(
-            mainAxisSize: MainAxisSize.min,
+          // Primera fila: Buscador y botón de agregar
+          Row(
             children: [
+              // Search bar
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Buscar...',
+                    prefixIcon: const Icon(Icons.search, size: 20),
+                    filled: true,
+                    fillColor: Colors.grey[100],
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: BorderSide.none),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 12),
+                    isDense: true,
+                  ),
+                  onChanged: (v) {
+                    _applyFilter();
+                  },
+                ),
+              ),
+              const SizedBox(width: 12),
+
+              // Add button - with transaction limit check
               Material(
                 color: Colors.transparent,
                 child: InkWell(
                   onTap: _canAddTransactions ? () => _showEditDialog() : null,
                   borderRadius: BorderRadius.circular(28),
                   child: Container(
-                    width: 56,
-                    height: 56,
+                    width: 50,
+                    height: 50,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
-                      gradient: _canAddTransactions 
-                        ? const LinearGradient(
-                            colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
-                          )
-                        : null,
+                      gradient: _canAddTransactions
+                          ? const LinearGradient(
+                              colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
+                            )
+                          : null,
                       color: _canAddTransactions ? null : Colors.grey,
                     ),
-                    child: Icon(
+                    child: const Icon(
                       Icons.add,
                       color: Colors.white,
-                      size: 28,
+                      size: 26,
                     ),
                   ),
                 ),
               ),
-              if (!_canAddTransactions && _maxTransactions != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                    'Límite alcanzado\n($_currentTransactionCount/$_maxTransactions)',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                      color: Colors.red,
-                      fontSize: 10,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              if (_canAddTransactions && _maxTransactions != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 4.0),
-                  child: Text(
-                    '$_currentTransactionCount/$_maxTransactions',
-                    style: const TextStyle(
-                      color: Colors.grey,
-                      fontSize: 10,
-                    ),
-                  ),
-                ),
             ],
           ),
-          const SizedBox(width: 12),
-
-          // Filter chips + Totals (right)
-          const SizedBox(width: 12),
-          // Filter chips (Todos / Cobros / Pagos)
-          Wrap(
-            spacing: 6,
+          const SizedBox(height: 12),
+          // Segunda fila: Chips de filtro y totales
+          Row(
             children: [
-              ChoiceChip(
-                label: const Text('Todos'),
-                selected: _filterType == 'all',
-                onSelected: (_) {
-                  setState(() => _filterType = 'all');
-                  _applyFilter();
-                },
-              ),
-              ChoiceChip(
-                label: Text(labels.cobros),
-                selected: _filterType == 'cobro',
-                onSelected: (_) {
-                  setState(() => _filterType = 'cobro');
-                  _applyFilter();
-                },
-              ),
-              ChoiceChip(
-                label: Text(labels.pagos),
-                selected: _filterType == 'pago',
-                onSelected: (_) {
-                  setState(() => _filterType = 'pago');
-                  _applyFilter();
-                },
-              ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            flex: 3,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
+              // Filter chips (Todos / Cobros / Pagos)
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildTotalCard(labels.totalInvertidoLabel, _totalCobros),
-                    const SizedBox(width: 8),
-                    _buildTotalCard(labels.totalPagosLabel, _totalPagos),
+                    _buildFilterChip('Todos', 'all'),
+                    const SizedBox(width: 4),
+                    _buildFilterChip(labels.cobros, 'cobro',
+                        color: Colors.amber[700]),
+                    const SizedBox(width: 4),
+                    _buildFilterChip(labels.pagos, 'pago',
+                        color: Colors.grey[800]),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Text('Registros: $_totalCount',
-                    style: const TextStyle(color: Colors.black54)),
-              ],
+              ),
+              const SizedBox(width: 12),
+              // Totales en tarjetas destacadas
+              Expanded(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _buildModernTotalCard(
+                        'Total ${labels.cobros.toLowerCase()}',
+                        _totalCobros,
+                        Colors.green,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: _buildModernTotalCard(
+                        'Total ${labels.pagos.toLowerCase()}',
+                        _totalPagos,
+                        Colors.red,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 12),
+              // Sort button
+              IconButton(
+                icon: const Icon(Icons.sort, size: 24),
+                tooltip: 'Ordenar',
+                onPressed: () => _showSortDialog(),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.grey[100],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          // Contador de registros
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'Registros: $_totalCount${_totalCountDB > 0 ? ' de $_totalCountDB' : ''}',
+              style: TextStyle(color: Colors.grey[600], fontSize: 12),
             ),
           ),
         ],
@@ -1251,110 +1450,185 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        TextField(
-          controller: _searchController,
-          decoration: InputDecoration(
-            hintText: 'Buscar...',
-            prefixIcon: const Icon(Icons.search),
-            filled: true,
-            fillColor: Colors.white,
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(20),
-                borderSide: BorderSide.none),
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          ),
-          onChanged: (v) => _applyFilter(),
-        ),
-        const SizedBox(height: 12),
+        // Buscador y botón agregar
         Row(
           children: [
+            Expanded(
+              child: TextField(
+                controller: _searchController,
+                decoration: InputDecoration(
+                  hintText: 'Buscar...',
+                  prefixIcon: const Icon(Icons.search, size: 20),
+                  filled: true,
+                  fillColor: Colors.grey[100],
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                  isDense: true,
+                ),
+                onChanged: (v) => _applyFilter(),
+              ),
+            ),
+            const SizedBox(width: 8),
             Material(
               color: Colors.transparent,
               child: InkWell(
                 onTap: _canAddTransactions ? () => _showEditDialog() : null,
                 borderRadius: BorderRadius.circular(26),
                 child: Container(
-                  width: 52,
-                  height: 52,
+                  width: 50,
+                  height: 50,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    gradient: _canAddTransactions 
-                      ? const LinearGradient(
-                          colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
-                        )
-                      : null,
+                    gradient: _canAddTransactions
+                        ? const LinearGradient(
+                            colors: [Color(0xFF2196F3), Color(0xFF1976D2)],
+                          )
+                        : null,
                     color: _canAddTransactions ? null : Colors.grey,
                   ),
                   child: const Icon(
                     Icons.add,
                     color: Colors.white,
-                    size: 26,
+                    size: 24,
                   ),
                 ),
               ),
             ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Chips de filtro
+        Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(25),
+                ),
+                padding: const EdgeInsets.all(4),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    Expanded(child: _buildFilterChip('Todos', 'all')),
+                    const SizedBox(width: 4),
+                    Expanded(
+                        child: _buildFilterChip(labels.cobros, 'cobro',
+                            color: Colors.amber[700])),
+                    const SizedBox(width: 4),
+                    Expanded(
+                        child: _buildFilterChip(labels.pagos, 'pago',
+                            color: Colors.grey[800])),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.sort, size: 24),
+              tooltip: 'Ordenar',
+              onPressed: () => _showSortDialog(),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.grey[100],
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Tarjetas de totales
+        Row(
+          children: [
+            Expanded(
+              child: _buildModernTotalCard(
+                'Total ${labels.cobros.toLowerCase()}',
+                _totalCobros,
+                Colors.green,
+              ),
+            ),
             const SizedBox(width: 8),
             Expanded(
-              child: Wrap(
-                spacing: 6,
-                children: [
-                  ChoiceChip(
-                      label: const Text('Todos'),
-                      selected: _filterType == 'all',
-                      onSelected: (_) {
-                        setState(() => _filterType = 'all');
-                        _applyFilter();
-                      }),
-                  ChoiceChip(
-                      label: Text(labels.cobros),
-                      selected: _filterType == 'cobro',
-                      onSelected: (_) {
-                        setState(() => _filterType = 'cobro');
-                        _applyFilter();
-                      }),
-                  ChoiceChip(
-                      label: Text(labels.pagos),
-                      selected: _filterType == 'pago',
-                      onSelected: (_) {
-                        setState(() => _filterType = 'pago');
-                        _applyFilter();
-                      }),
-                ],
+              child: _buildModernTotalCard(
+                'Total ${labels.pagos.toLowerCase()}',
+                _totalPagos,
+                Colors.red,
               ),
             ),
           ],
         ),
         const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _buildTotalCard(labels.totalInvertidoLabel, _totalCobros)),
-            const SizedBox(width: 8),
-            Expanded(child: _buildTotalCard(labels.totalPagosLabel, _totalPagos)),
-          ],
+        Align(
+          alignment: Alignment.centerRight,
+          child: Text(
+            'Registros: $_totalCount${_totalCountDB > 0 ? ' de $_totalCountDB' : ''}',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
         ),
-        const SizedBox(height: 6),
-        Text('Registros: $_totalCount',
-            style: const TextStyle(color: Colors.black54)),
       ],
     );
   }
 
-  Widget _buildTotalCard(String title, double value) {
+  Widget _buildFilterChip(String label, String filterType, {Color? color}) {
+    final isSelected = _filterType == filterType;
+    // Si no tiene color personalizado (como "Todos"), usar azul oscuro
+    final backgroundColor =
+        isSelected ? (color ?? const Color(0xFF1976D2)) : Colors.transparent;
+
+    return GestureDetector(
+      onTap: () {
+        setState(() => _filterType = filterType);
+        _applyFilter();
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black87,
+            fontSize: 13,
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildModernTotalCard(String title, double value, Color color) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6)]),
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withOpacity(0.3), width: 1),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(title,
-              style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          const SizedBox(height: 6),
-          Text('\$${_formatAmount(value)}',
-              style: const TextStyle(fontWeight: FontWeight.bold)),
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 11,
+              color: color.withOpacity(0.8),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '\$${_formatAmount(value)}',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
         ],
       ),
     );
@@ -1362,6 +1636,54 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
   String _formatDate(DateTime d) {
     return '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _showSortDialog() async {
+    final result = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Ordenar por'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RadioListTile<String>(
+              title: const Text('Fecha (más reciente primero)'),
+              value: 'date_desc',
+              groupValue: _sortOrder,
+              onChanged: (v) => Navigator.of(context).pop(v),
+            ),
+            RadioListTile<String>(
+              title: const Text('Fecha (más antiguo primero)'),
+              value: 'date_asc',
+              groupValue: _sortOrder,
+              onChanged: (v) => Navigator.of(context).pop(v),
+            ),
+            RadioListTile<String>(
+              title: const Text('Alfabético (A-Z)'),
+              value: 'alpha',
+              groupValue: _sortOrder,
+              onChanged: (v) => Navigator.of(context).pop(v),
+            ),
+            RadioListTile<String>(
+              title: const Text('Monto (mayor a menor)'),
+              value: 'amount_desc',
+              groupValue: _sortOrder,
+              onChanged: (v) => Navigator.of(context).pop(v),
+            ),
+            RadioListTile<String>(
+              title: const Text('Monto (menor a mayor)'),
+              value: 'amount_asc',
+              groupValue: _sortOrder,
+              onChanged: (v) => Navigator.of(context).pop(v),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result != null) {
+      await _saveSortPreference(result);
+    }
   }
 
   Future<void> _shareInvoice(Payment p) async {
@@ -1412,7 +1734,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       final reductions = moves
           .where((m) => m.movementType == 'reduction')
           .fold(0.0, (s, m) => s + m.amount);
-      
+
       // Calcular el monto actual real basado en los movimientos
       final amountVal = initial + increments - reductions;
 

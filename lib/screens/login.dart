@@ -34,7 +34,7 @@ class _LoginPageState extends State<LoginPage> {
 
       final ok = res.session != null || res.user != null;
       if (!mounted) return;
-      
+
       if (ok && res.user != null) {
         // Obtener rol y preferencia del usuario
         final profileResponse = await Supabase.instance.client
@@ -44,10 +44,12 @@ class _LoginPageState extends State<LoginPage> {
             .single();
 
         final userRole = profileResponse['role'] as String? ?? 'free';
-        final interfacePreference = profileResponse['interface_preference'] as String?;
+        final interfacePreference =
+            profileResponse['interface_preference'] as String?;
 
         // Verificar límite de sesiones
-        final sessionCheck = await SessionManager.checkSessionLimit(res.user!.id, userRole);
+        final sessionCheck =
+            await SessionManager.checkSessionLimit(res.user!.id, userRole);
 
         if (!sessionCheck.canLogin) {
           // Mostrar diálogo para cerrar sesiones antiguas
@@ -64,12 +66,13 @@ class _LoginPageState extends State<LoginPage> {
               sessionCheck.sessions.map((s) => s['id'] as String).toList(),
             );
             await SessionManager.createSession();
-            
+
             if (!mounted) return;
             // Verificar si necesita elegir preferencia
             if (interfacePreference == null || interfacePreference.isEmpty) {
               Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
+                MaterialPageRoute(
+                    builder: (_) => const PreferenceSelectionPage()),
                 (route) => false,
               );
             } else {
@@ -89,12 +92,13 @@ class _LoginPageState extends State<LoginPage> {
         } else {
           // Crear nueva sesión
           await SessionManager.createSession();
-          
+
           if (!mounted) return;
           // Verificar si necesita elegir preferencia
           if (interfacePreference == null || interfacePreference.isEmpty) {
             Navigator.of(context).pushAndRemoveUntil(
-              MaterialPageRoute(builder: (_) => const PreferenceSelectionPage()),
+              MaterialPageRoute(
+                  builder: (_) => const PreferenceSelectionPage()),
               (route) => false,
             );
           } else {
@@ -105,11 +109,13 @@ class _LoginPageState extends State<LoginPage> {
           }
         }
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo iniciar sesión')));
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo iniciar sesión')));
       }
     } catch (e) {
       if (!mounted) return;
-      final msg = friendlySupabaseMessage(e, fallback: 'No se pudo iniciar sesión');
+      final msg =
+          friendlySupabaseMessage(e, fallback: 'No se pudo iniciar sesión');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -139,14 +145,16 @@ class _LoginPageState extends State<LoginPage> {
               const Text('Sesiones activas:'),
               const SizedBox(height: 8),
               ...sessions.map((session) {
-                final deviceInfo = session['device_info'] as String? ?? 'Dispositivo desconocido';
+                final deviceInfo = session['device_info'] as String? ??
+                    'Dispositivo desconocido';
                 final lastActivity = session['last_activity'] as String?;
                 String activityText = '';
-                
+
                 if (lastActivity != null) {
                   try {
                     final dateTime = DateTime.parse(lastActivity);
-                    activityText = DateFormat('dd/MM/yyyy HH:mm').format(dateTime);
+                    activityText =
+                        DateFormat('dd/MM/yyyy HH:mm').format(dateTime);
                   } catch (e) {
                     activityText = 'Fecha desconocida';
                   }
@@ -162,10 +170,12 @@ class _LoginPageState extends State<LoginPage> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(deviceInfo, style: const TextStyle(fontSize: 12)),
+                            Text(deviceInfo,
+                                style: const TextStyle(fontSize: 12)),
                             Text(
                               'Última actividad: $activityText',
-                              style: const TextStyle(fontSize: 10, color: Colors.grey),
+                              style: const TextStyle(
+                                  fontSize: 10, color: Colors.grey),
                             ),
                           ],
                         ),
@@ -215,7 +225,8 @@ class _LoginPageState extends State<LoginPage> {
                 child: CircleAvatar(
                   radius: 44,
                   backgroundColor: Colors.green,
-                  child: Icon(Icons.attach_money, color: Colors.white, size: 36),
+                  child:
+                      Icon(Icons.attach_money, color: Colors.white, size: 36),
                 ),
               ),
             ),
@@ -232,16 +243,21 @@ class _LoginPageState extends State<LoginPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Center(child: Text('Inicio de sesión', style: Theme.of(context).textTheme.headlineMedium)),
+                    Center(
+                        child: Text('Inicio de sesión',
+                            style: Theme.of(context).textTheme.headlineMedium)),
                     const SizedBox(height: 18),
                     TextFormField(
                       controller: _emailController,
                       decoration: InputDecoration(
-                        labelText: 'Name',
+                        labelText: 'Correo electrónico',
                         filled: true,
                         fillColor: Colors.grey[300],
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide.none),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 18),
                       ),
                       keyboardType: TextInputType.emailAddress,
                       validator: (v) {
@@ -255,30 +271,43 @@ class _LoginPageState extends State<LoginPage> {
                     TextFormField(
                       controller: _passwordController,
                       decoration: InputDecoration(
-                        labelText: 'Password',
+                        labelText: 'Contraseña',
                         filled: true,
                         fillColor: Colors.grey[300],
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(20), borderSide: BorderSide.none),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 18),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(20),
+                            borderSide: BorderSide.none),
+                        contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 18),
                       ),
                       obscureText: true,
                       validator: (v) {
-                        if (v == null || v.isEmpty) return 'Ingresa una contraseña';
-                        if (v.length < 6) return 'La contraseña debe tener al menos 6 caracteres';
+                        if (v == null || v.isEmpty)
+                          return 'Ingresa una contraseña';
+                        if (v.length < 6)
+                          return 'La contraseña debe tener al menos 6 caracteres';
                         return null;
                       },
                     ),
                     const SizedBox(height: 18),
                     ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.black, padding: const EdgeInsets.symmetric(vertical: 16), shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.black,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8))),
                       onPressed: _loading ? null : _signIn,
-                      child: _loading ? const CircularProgressIndicator() : const Text('Log in'),
+                      child: _loading
+                          ? const CircularProgressIndicator()
+                          : const Text('Iniciar sesión'),
                     ),
                     const SizedBox(height: 12),
                     Center(
                       child: TextButton(
-                        onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const RegisterPage())),
-                        child: const Text('Signup !'),
+                        onPressed: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                                builder: (_) => const RegisterPage())),
+                        child: const Text('¿No tienes cuenta? Regístrate'),
                       ),
                     ),
                   ],
