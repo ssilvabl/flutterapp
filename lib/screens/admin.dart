@@ -785,7 +785,7 @@ class _AdminPageState extends State<AdminPage> {
       // Sessions
       if (sessions.isNotEmpty) {
         sql.writeln('-- User Sessions (${(sessions as List).length} registros)');
-        for (final session in sessions as List) {
+        for (final session in sessions) {
           sql.writeln('INSERT INTO user_sessions (id, user_id, device_info, created_at)');
           sql.writeln('VALUES (');
           sql.writeln("  '${session['id']}',");
@@ -815,7 +815,7 @@ class _AdminPageState extends State<AdminPage> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Backup completo generado: ${(profiles as List).length} usuarios, ${(payments as List).length} pagos'),
+          content: Text('Backup completo generado: ${(profiles).length} usuarios, ${(payments).length} pagos'),
           duration: const Duration(seconds: 4),
         ),
       );

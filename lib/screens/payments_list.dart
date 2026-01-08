@@ -227,7 +227,12 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           }
         }
 
-        payment.currentAmount = initial + increments - reductions;
+        // Si no hay movimientos initial será 0, entonces usamos amount como fallback
+        if (initial == 0.0 && increments == 0.0 && reductions == 0.0) {
+          payment.currentAmount = payment.amount;
+        } else {
+          payment.currentAmount = initial + increments - reductions;
+        }
       } catch (e) {
         print('Error calculando monto actual para ${payment.id}: $e');
         payment.currentAmount = payment.amount;
@@ -482,7 +487,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
     double delta = 0.0;
     String? previewOp; // 'increment' or 'reduction'
-    double previewFinal = p?.amount ?? 0.0;
+    double previewFinal = p?.currentAmount ?? 0.0;
 
     final result = await showDialog<bool>(
       context: context,
@@ -513,7 +518,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Monto Actual: \$${_formatAmount(p.amount)}',
+                        Text(
+                            'Monto Actual: \$${_formatAmount(p.currentAmount)}',
                             style: const TextStyle(fontSize: 12)),
                         const SizedBox(height: 6),
                         const Text(
@@ -533,7 +539,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                       delta = _parseAmountFromFormatted(amountCtrl.text);
                       // reset preview operation until user chooses increment/reduce
                       previewOp = null;
-                      previewFinal = p?.amount ?? 0.0;
+                      previewFinal = p?.currentAmount ?? 0.0;
                       setStateDialog(() {});
                     },
                     validator: (v) =>
@@ -560,7 +566,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                   }
                                   previewOp = 'increment';
                                   delta = val;
-                                  previewFinal = p.amount + delta;
+                                  previewFinal = p.currentAmount + delta;
                                   setStateDialog(() {});
                                 },
                                 icon: const Icon(Icons.add),
@@ -581,7 +587,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                   }
                                   previewOp = 'reduction';
                                   delta = val;
-                                  previewFinal = p.amount - delta;
+                                  previewFinal = p.currentAmount - delta;
                                   if (previewFinal < 0) previewFinal = 0.0;
                                   setStateDialog(() {});
                                 },
@@ -664,18 +670,31 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                   return;
                 }
 
-                // edit: require a preview operation (increment or reduction)
-                if (previewOp == null) {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                      content: Text(
-                          'Presiona Incrementar o Reducir para previsualizar antes de guardar')));
-                  return;
+                // edit: if there's a preview operation, create the movement first
+                if (previewOp != null && delta > 0) {
+                  try {
+                    await _supabase.from('payments_movements').insert({
+                      'payment_id': p.id,
+                      'user_id': _userId,
+                      'movement_type':
+                          previewOp == 'increment' ? 'increment' : 'reduction',
+                      'amount': delta,
+                      'note': previewOp == 'increment'
+                          ? 'Incremento manual'
+                          : 'Reducción manual',
+                      'created_at': DateTime.now().toIso8601String(),
+                    });
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                        content: Text('Error al guardar el movimiento: $e')));
+                    return;
+                  }
                 }
 
-                final newAmount = previewFinal;
+                if (!context.mounted) return;
                 Navigator.of(context).pop(true);
-                await _update(
-                    p.id, entity, newAmount, endDate, type, description);
+                await _update(p.id, entity, endDate, type, description);
               },
               child: const Text('Guardar'),
             ),
@@ -744,53 +763,23 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     }
   }
 
-  Future<void> _update(String id, String entity, double amount,
-      DateTime? endDate, String type, String description) async {
+  Future<void> _update(String id, String entity, DateTime? endDate, String type,
+      String description) async {
     setState(() => _loading = true);
     try {
       if (_userId == null) throw Exception('No autorizado');
 
-      // Fetch current payment to detect amount changes
-      final curRes = await _supabase
-          .from('payments')
-          .select()
-          .eq('id', id)
-          .eq('user_id', _userId)
-          .maybeSingle();
-
-      double previousAmount = 0.0;
-      if (curRes != null) {
-        final map = curRes as Map<String, dynamic>;
-        previousAmount = (map['amount'] != null)
-            ? double.tryParse(map['amount'].toString()) ?? 0.0
-            : 0.0;
-      }
-
+      // Update only descriptive fields, never modify the amount
       await _supabase
           .from('payments')
           .update({
             'entity_name': entity,
-            'amount': amount,
             'end_date': endDate?.toIso8601String(),
             'type': type,
             'description': description,
           })
           .eq('id', id)
           .eq('user_id', _userId);
-
-      // If amount changed, record a movement
-      final delta = amount - previousAmount;
-      if (delta != 0.0) {
-        final movementType = delta > 0 ? 'increment' : 'reduction';
-        await _supabase.from('payments_movements').insert({
-          'payment_id': id,
-          'user_id': _userId,
-          'movement_type': movementType,
-          'amount': delta.abs(),
-          'note': 'Ajuste manual',
-          'created_at': DateTime.now().toIso8601String(),
-        });
-      }
 
       if (mounted) {
         final labels = PreferenceInheritedWidget.watch(context).labels;
