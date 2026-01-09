@@ -71,7 +71,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   bool _loading = false;
   bool _loadingMore = false;
   int _page = 0;
-  final int _pageSize = 10;
+  final int _pageSize = 50;
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -109,9 +109,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       });
       return;
     }
-
-    // Setup scroll infinito
-    _scrollController.addListener(_onScroll);
 
     // Cargar datos en paralelo para mejorar rendimiento
     _initializeData();
@@ -343,16 +340,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     super.dispose();
   }
 
-  // Scroll infinito
-  void _onScroll() {
-    if (_loadingMore || !_hasMoreItems) return;
-    final maxScroll = _scrollController.position.maxScrollExtent;
-    final currentScroll = _scrollController.position.pixels;
-    if (currentScroll >= maxScroll * 0.8) {
-      _fetch(next: true);
-    }
-  }
-
   // Cargar preferencia de ordenamiento
   Future<void> _loadSortPreference() async {
     final prefs = await SharedPreferences.getInstance();
@@ -523,7 +510,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                             style: const TextStyle(fontSize: 12)),
                         const SizedBox(height: 6),
                         const Text(
-                            'Ingresa el valor a incrementar o disminuir del monto actual, luego presiona "Incrementar" o "Reducir" para ver la vista previa.'),
+                            'Puedes editar el nombre, tipo o descripción sin cambiar el monto. Si deseas modificar el monto, ingresa el valor a ajustar y presiona "Incrementar" o "Reducir".',
+                            style: TextStyle(fontSize: 11, color: Colors.grey)),
                         const SizedBox(height: 6),
                       ],
                     ),
@@ -532,7 +520,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                     decoration: InputDecoration(
                         labelText: p == null
                             ? 'Monto Inicial'
-                            : 'Monto a ajustar (ej: 20.000)'),
+                            : 'Monto a ajustar (opcional)'),
                     keyboardType: TextInputType.number,
                     onChanged: (v) {
                       _formatCurrencyController(amountCtrl, v);
@@ -542,10 +530,16 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                       previewFinal = p?.currentAmount ?? 0.0;
                       setStateDialog(() {});
                     },
-                    validator: (v) =>
-                        (v == null || _parseAmountFromFormatted(v) <= 0)
+                    validator: (v) {
+                      // Solo validar si es creación (p == null)
+                      if (p == null) {
+                        return (v == null || _parseAmountFromFormatted(v) <= 0)
                             ? 'Monto inválido'
-                            : null,
+                            : null;
+                      }
+                      // Para edición, es opcional
+                      return null;
+                    },
                   ),
                   if (p != null)
                     Padding(
@@ -911,272 +905,336 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                           Center(child: Text('Sin registros')),
                         ],
                       )
-                    : ListView.separated(
-                        controller: _scrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount:
-                            _filteredItems.length + (_loadingMore ? 1 : 0),
-                        separatorBuilder: (_, __) => const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          // Mostrar indicador de carga al final
-                          if (index == _filteredItems.length) {
-                            return const Center(
-                              child: Padding(
-                                padding: EdgeInsets.all(16.0),
-                                child: CircularProgressIndicator(),
-                              ),
-                            );
-                          }
+                    : Column(
+                        children: [
+                          Expanded(
+                            child: ListView.separated(
+                              controller: _scrollController,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: _filteredItems.length,
+                              separatorBuilder: (_, __) =>
+                                  const SizedBox(height: 12),
+                              itemBuilder: (context, index) {
+                                final it = _filteredItems[index];
+                                final screenWidth =
+                                    MediaQuery.of(context).size.width;
+                                final showPopupActions = screenWidth < 600;
 
-                          final it = _filteredItems[index];
-                          final screenWidth = MediaQuery.of(context).size.width;
-                          final showPopupActions = screenWidth < 600;
-
-                          return GestureDetector(
-                            onTap: () async {
-                              await Navigator.of(context).push(
-                                MaterialPageRoute(
-                                  builder: (_) => PaymentDetailsPage(
-                                    payment: {
-                                      'id': it.id,
-                                      'entity': it.entity,
-                                      'amount': it.currentAmount,
-                                      'createdAt': it.createdAt,
-                                      'endDate': it.endDate,
-                                      'type': it.type,
-                                      'description': it.description,
-                                    },
-                                    onEdit: (payment) async {
-                                      await _showEditDialog(p: payment);
-                                    },
-                                  ),
-                                ),
-                              );
-                            },
-                            child: Row(
-                              children: [
-                                Expanded(
-                                  child: Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 16),
-                                    decoration: BoxDecoration(
-                                        color: Colors.black87,
-                                        borderRadius:
-                                            BorderRadius.circular(10)),
-                                    child: LayoutBuilder(builder: (ctx, c) {
-                                      final narrow = c.maxWidth < 520;
-                                      if (narrow) {
-                                        return Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.start,
-                                          children: [
-                                            Row(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.start,
-                                              children: [
-                                                Expanded(
-                                                  child: Text(
-                                                    it.entity,
-                                                    style: const TextStyle(
-                                                        color: Colors.white),
-                                                    maxLines: 2,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                ),
-                                                const SizedBox(width: 8),
-                                                ConstrainedBox(
-                                                    constraints:
-                                                        const BoxConstraints(
-                                                            minWidth: 60),
-                                                    child: Text(
-                                                        '\$${_formatAmount(it.currentAmount)}',
-                                                        style: const TextStyle(
-                                                            color:
-                                                                Colors.white),
-                                                        textAlign:
-                                                            TextAlign.right)),
-                                              ],
+                                return GestureDetector(
+                                  onTap: () async {
+                                    await Navigator.of(context).push(
+                                      MaterialPageRoute(
+                                        builder: (_) => PaymentDetailsPage(
+                                          payment: {
+                                            'id': it.id,
+                                            'entity': it.entity,
+                                            'amount': it.currentAmount,
+                                            'createdAt': it.createdAt,
+                                            'endDate': it.endDate,
+                                            'type': it.type,
+                                            'description': it.description,
+                                          },
+                                          onEdit: (payment) async {
+                                            await _showEditDialog(p: payment);
+                                          },
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: Row(
+                                    children: [
+                                      // Número de registro
+                                      Container(
+                                        width: 40,
+                                        height: 40,
+                                        margin: const EdgeInsets.only(right: 8),
+                                        decoration: BoxDecoration(
+                                          color: it.type == 'cobro'
+                                              ? Colors.green.withOpacity(0.2)
+                                              : Colors.red.withOpacity(0.2),
+                                          borderRadius:
+                                              BorderRadius.circular(8),
+                                          border: Border.all(
+                                            color: it.type == 'cobro'
+                                                ? Colors.green
+                                                : Colors.red,
+                                            width: 2,
+                                          ),
+                                        ),
+                                        child: Center(
+                                          child: Text(
+                                            '#${index + 1}',
+                                            style: TextStyle(
+                                              color: it.type == 'cobro'
+                                                  ? Colors.green
+                                                  : Colors.red,
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 12,
                                             ),
-                                            if (it.endDate != null) ...[
-                                              const SizedBox(height: 6),
-                                              Text(
-                                                  'Vence: ${_formatDate(it.endDate!)}',
-                                                  style: const TextStyle(
-                                                      color: Colors.white70,
-                                                      fontSize: 12),
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis),
-                                            ],
-                                          ],
-                                        );
-                                      }
-
-                                      // Wide layout: keep items on one row but allow wrapping of text
-                                      return Row(
-                                        children: [
-                                          Expanded(
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment
-                                                      .spaceBetween,
-                                              children: [
-                                                Expanded(
-                                                  child: Column(
+                                          ),
+                                        ),
+                                      ),
+                                      Expanded(
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 12, vertical: 16),
+                                          decoration: BoxDecoration(
+                                              color: Colors.black87,
+                                              borderRadius:
+                                                  BorderRadius.circular(10)),
+                                          child:
+                                              LayoutBuilder(builder: (ctx, c) {
+                                            final narrow = c.maxWidth < 520;
+                                            if (narrow) {
+                                              return Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Row(
                                                     crossAxisAlignment:
                                                         CrossAxisAlignment
                                                             .start,
                                                     children: [
-                                                      Text(it.entity,
+                                                      Expanded(
+                                                        child: Text(
+                                                          it.entity,
                                                           style:
                                                               const TextStyle(
                                                                   color: Colors
                                                                       .white),
                                                           maxLines: 2,
                                                           overflow: TextOverflow
-                                                              .ellipsis),
-                                                      if (it.endDate != null)
-                                                        Text(
-                                                            'Vence: ${_formatDate(it.endDate!)}',
-                                                            style: const TextStyle(
-                                                                color: Colors
-                                                                    .white70,
-                                                                fontSize: 12),
-                                                            maxLines: 1,
-                                                            overflow:
-                                                                TextOverflow
-                                                                    .ellipsis),
+                                                              .ellipsis,
+                                                        ),
+                                                      ),
+                                                      const SizedBox(width: 8),
+                                                      ConstrainedBox(
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                  minWidth: 60),
+                                                          child: Text(
+                                                              '\$${_formatAmount(it.currentAmount)}',
+                                                              style: const TextStyle(
+                                                                  color: Colors
+                                                                      .white),
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .right)),
+                                                    ],
+                                                  ),
+                                                  if (it.endDate != null) ...[
+                                                    const SizedBox(height: 6),
+                                                    Text(
+                                                        'Vence: ${_formatDate(it.endDate!)}',
+                                                        style: const TextStyle(
+                                                            color:
+                                                                Colors.white70,
+                                                            fontSize: 12),
+                                                        maxLines: 1,
+                                                        overflow: TextOverflow
+                                                            .ellipsis),
+                                                  ],
+                                                ],
+                                              );
+                                            }
+
+                                            // Wide layout: keep items on one row but allow wrapping of text
+                                            return Row(
+                                              children: [
+                                                Expanded(
+                                                  child: Row(
+                                                    mainAxisAlignment:
+                                                        MainAxisAlignment
+                                                            .spaceBetween,
+                                                    children: [
+                                                      Expanded(
+                                                        child: Column(
+                                                          crossAxisAlignment:
+                                                              CrossAxisAlignment
+                                                                  .start,
+                                                          children: [
+                                                            Text(it.entity,
+                                                                style: const TextStyle(
+                                                                    color: Colors
+                                                                        .white),
+                                                                maxLines: 2,
+                                                                overflow:
+                                                                    TextOverflow
+                                                                        .ellipsis),
+                                                            if (it.endDate !=
+                                                                null)
+                                                              Text(
+                                                                  'Vence: ${_formatDate(it.endDate!)}',
+                                                                  style: const TextStyle(
+                                                                      color: Colors
+                                                                          .white70,
+                                                                      fontSize:
+                                                                          12),
+                                                                  maxLines: 1,
+                                                                  overflow:
+                                                                      TextOverflow
+                                                                          .ellipsis),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                      ConstrainedBox(
+                                                          constraints:
+                                                              const BoxConstraints(
+                                                                  minWidth: 60),
+                                                          child: Text(
+                                                              '\$${_formatAmount(it.currentAmount)}',
+                                                              style: const TextStyle(
+                                                                  color: Colors
+                                                                      .white),
+                                                              textAlign:
+                                                                  TextAlign
+                                                                      .right)),
                                                     ],
                                                   ),
                                                 ),
-                                                ConstrainedBox(
-                                                    constraints:
-                                                        const BoxConstraints(
-                                                            minWidth: 60),
-                                                    child: Text(
-                                                        '\$${_formatAmount(it.currentAmount)}',
-                                                        style: const TextStyle(
+                                              ],
+                                            );
+                                          }),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 12),
+                                      // Acciones externas: popup en chico, fila completa en ancho
+                                      showPopupActions
+                                          ? PopupMenuButton<String>(
+                                              onSelected: (v) async {
+                                                if (v == 'delete') {
+                                                  await _confirmDelete(it.id);
+                                                  return;
+                                                }
+                                                if (v == 'edit') {
+                                                  await _showEditDialog(p: it);
+                                                  return;
+                                                }
+                                                if (v == 'details') {
+                                                  await Navigator.of(context)
+                                                      .push(MaterialPageRoute(
+                                                          builder: (_) =>
+                                                              PaymentDetailsPage(
+                                                                  payment: {
+                                                                    'id': it.id,
+                                                                    'entity': it
+                                                                        .entity,
+                                                                    'amount': it
+                                                                        .currentAmount,
+                                                                    'createdAt':
+                                                                        it.createdAt,
+                                                                    'endDate': it
+                                                                        .endDate,
+                                                                    'type':
+                                                                        it.type,
+                                                                    'description':
+                                                                        it.description,
+                                                                  },
+                                                                  onEdit:
+                                                                      (payment) async {
+                                                                    await _showEditDialog(
+                                                                        p: payment);
+                                                                  })));
+                                                  return;
+                                                }
+                                              },
+                                              itemBuilder: (_) => const [
+                                                PopupMenuItem(
+                                                    value: 'details',
+                                                    child: Text('Detalles')),
+                                                PopupMenuItem(
+                                                    value: 'edit',
+                                                    child: Text('Editar')),
+                                                PopupMenuItem(
+                                                    value: 'delete',
+                                                    child: Text('Eliminar',
+                                                        style: TextStyle(
                                                             color:
-                                                                Colors.white),
-                                                        textAlign:
-                                                            TextAlign.right)),
+                                                                Colors.red))),
+                                              ],
+                                            )
+                                          : Row(
+                                              children: [
+                                                IconButton(
+                                                  icon: const Icon(
+                                                      Icons.delete_outline,
+                                                      color: Colors.red,
+                                                      size: 32),
+                                                  onPressed: () =>
+                                                      _confirmDelete(it.id),
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(
+                                                      Icons.edit_outlined,
+                                                      color: Colors.black,
+                                                      size: 28),
+                                                  onPressed: () =>
+                                                      _showEditDialog(p: it),
+                                                ),
+                                                IconButton(
+                                                  icon: const Icon(
+                                                      Icons.info_outline,
+                                                      color: Colors.blue,
+                                                      size: 28),
+                                                  tooltip: 'Detalles',
+                                                  onPressed: () async {
+                                                    await Navigator.of(context)
+                                                        .push(MaterialPageRoute(
+                                                            builder: (_) =>
+                                                                PaymentDetailsPage(
+                                                                    payment: {
+                                                                      'id':
+                                                                          it.id,
+                                                                      'entity':
+                                                                          it.entity,
+                                                                      'amount':
+                                                                          it.currentAmount,
+                                                                      'createdAt':
+                                                                          it.createdAt,
+                                                                      'endDate':
+                                                                          it.endDate,
+                                                                      'type': it
+                                                                          .type,
+                                                                      'description':
+                                                                          it.description,
+                                                                    },
+                                                                    onEdit:
+                                                                        (payment) async {
+                                                                      await _showEditDialog(
+                                                                          p: payment);
+                                                                    })));
+                                                  },
+                                                ),
                                               ],
                                             ),
-                                          ),
-                                        ],
-                                      );
-                                    }),
+                                    ],
                                   ),
-                                ),
-                                const SizedBox(width: 12),
-                                // Acciones externas: popup en chico, fila completa en ancho
-                                showPopupActions
-                                    ? PopupMenuButton<String>(
-                                        onSelected: (v) async {
-                                          if (v == 'delete') {
-                                            await _confirmDelete(it.id);
-                                            return;
-                                          }
-                                          if (v == 'edit') {
-                                            await _showEditDialog(p: it);
-                                            return;
-                                          }
-                                          if (v == 'details') {
-                                            await Navigator.of(context).push(
-                                                MaterialPageRoute(
-                                                    builder: (_) =>
-                                                        PaymentDetailsPage(
-                                                            payment: {
-                                                              'id': it.id,
-                                                              'entity':
-                                                                  it.entity,
-                                                              'amount': it
-                                                                  .currentAmount,
-                                                              'createdAt':
-                                                                  it.createdAt,
-                                                              'endDate':
-                                                                  it.endDate,
-                                                              'type': it.type,
-                                                              'description': it
-                                                                  .description,
-                                                            },
-                                                            onEdit:
-                                                                (payment) async {
-                                                              await _showEditDialog(
-                                                                  p: payment);
-                                                            })));
-                                            return;
-                                          }
-                                        },
-                                        itemBuilder: (_) => const [
-                                          PopupMenuItem(
-                                              value: 'details',
-                                              child: Text('Detalles')),
-                                          PopupMenuItem(
-                                              value: 'edit',
-                                              child: Text('Editar')),
-                                          PopupMenuItem(
-                                              value: 'delete',
-                                              child: Text('Eliminar',
-                                                  style: TextStyle(
-                                                      color: Colors.red))),
-                                        ],
-                                      )
-                                    : Row(
-                                        children: [
-                                          IconButton(
-                                            icon: const Icon(
-                                                Icons.delete_outline,
-                                                color: Colors.red,
-                                                size: 32),
-                                            onPressed: () =>
-                                                _confirmDelete(it.id),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(
-                                                Icons.edit_outlined,
-                                                color: Colors.black,
-                                                size: 28),
-                                            onPressed: () =>
-                                                _showEditDialog(p: it),
-                                          ),
-                                          IconButton(
-                                            icon: const Icon(Icons.info_outline,
-                                                color: Colors.blue, size: 28),
-                                            tooltip: 'Detalles',
-                                            onPressed: () async {
-                                              await Navigator.of(context).push(
-                                                  MaterialPageRoute(
-                                                      builder: (_) =>
-                                                          PaymentDetailsPage(
-                                                              payment: {
-                                                                'id': it.id,
-                                                                'entity':
-                                                                    it.entity,
-                                                                'amount': it
-                                                                    .currentAmount,
-                                                                'createdAt': it
-                                                                    .createdAt,
-                                                                'endDate':
-                                                                    it.endDate,
-                                                                'type': it.type,
-                                                                'description': it
-                                                                    .description,
-                                                              },
-                                                              onEdit:
-                                                                  (payment) async {
-                                                                await _showEditDialog(
-                                                                    p: payment);
-                                                              })));
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                              ],
+                                );
+                              },
                             ),
-                          );
-                        },
+                          ),
+                          // Botón Ver más
+                          if (_hasMoreItems && !_loading)
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16.0),
+                              child: Center(
+                                child: _loadingMore
+                                    ? const CircularProgressIndicator()
+                                    : ElevatedButton.icon(
+                                        onPressed: () => _fetch(next: true),
+                                        icon: const Icon(Icons.expand_more),
+                                        label: const Text('Ver más'),
+                                        style: ElevatedButton.styleFrom(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 24,
+                                            vertical: 12,
+                                          ),
+                                        ),
+                                      ),
+                              ),
+                            ),
+                        ],
                       ),
               ),
             ),
