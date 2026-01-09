@@ -122,6 +122,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     await Future.wait([
       _fetch(),
       _loadProfileAndRole(), // Combinar carga de perfil y rol
+      _calculateTotalsFromDB(), // Calcular totales desde la BD
     ]);
   }
 
@@ -152,6 +153,98 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     }
   }
 
+  // Calcular totales desde la base de datos (todos los registros, no solo los cargados)
+  Future<void> _calculateTotalsFromDB() async {
+    try {
+      final uid = _userId;
+      if (uid == null) return;
+
+      // Obtener todos los payments del usuario
+      final paymentsRes = await _supabase
+          .from('payments')
+          .select('id, type, amount')
+          .eq('user_id', uid);
+
+      if (paymentsRes == null) return;
+
+      final paymentsList = paymentsRes as List;
+      if (paymentsList.isEmpty) {
+        setState(() {
+          _totalCobros = 0.0;
+          _totalPagos = 0.0;
+        });
+        return;
+      }
+
+      // Obtener todos los movimientos
+      final movementsRes = await _supabase
+          .from('payments_movements')
+          .select('payment_id, movement_type, amount')
+          .eq('user_id', uid);
+
+      final movementsList = (movementsRes as List?) ?? [];
+
+      // Agrupar movimientos por payment_id
+      final movementsByPayment = <String, List<Map<String, dynamic>>>{};
+      for (var mov in movementsList) {
+        final paymentId = mov['payment_id'].toString();
+        movementsByPayment.putIfAbsent(paymentId, () => []);
+        movementsByPayment[paymentId]!.add(mov as Map<String, dynamic>);
+      }
+
+      double totalCobros = 0.0;
+      double totalPagos = 0.0;
+
+      // Calcular currentAmount para cada payment y sumar por tipo
+      for (var payment in paymentsList) {
+        final paymentMap = payment as Map<String, dynamic>;
+        final paymentId = paymentMap['id'].toString();
+        final type = paymentMap['type'] as String;
+        final initialAmount = (paymentMap['amount'] as num?)?.toDouble() ?? 0.0;
+
+        // Calcular currentAmount basado en movimientos
+        final movements = movementsByPayment[paymentId] ?? [];
+        double initial = 0.0;
+        double increments = 0.0;
+        double reductions = 0.0;
+
+        for (var mov in movements) {
+          final movType = mov['movement_type'] as String;
+          final amount = (mov['amount'] as num?)?.toDouble() ?? 0.0;
+
+          if (movType == 'initial') {
+            initial += amount;
+          } else if (movType == 'increment') {
+            increments += amount;
+          } else if (movType == 'reduction') {
+            reductions += amount;
+          }
+        }
+
+        double currentAmount = initial + increments - reductions;
+
+        // Si no hay movimientos, usar el amount inicial
+        if (initial == 0.0 && increments == 0.0 && reductions == 0.0) {
+          currentAmount = initialAmount;
+        }
+
+        // Sumar al total correspondiente
+        if (type == 'cobro') {
+          totalCobros += currentAmount;
+        } else if (type == 'pago') {
+          totalPagos += currentAmount;
+        }
+      }
+
+      setState(() {
+        _totalCobros = totalCobros;
+        _totalPagos = totalPagos;
+      });
+    } catch (e) {
+      print('Error calculating totals from DB: $e');
+    }
+  }
+
   // Setup tiempo real para payments y movements
   void _setupRealtime() {
     final uid = _userId;
@@ -174,6 +267,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             _items = payments;
           });
           _applyFilter();
+          // Recalcular totales desde la BD
+          await _calculateTotalsFromDB();
         });
 
     // Suscribirse a cambios en movements para actualizar montos
@@ -189,6 +284,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           await _calculateCurrentAmounts(_items);
           setState(() {});
           _applyFilter();
+          // Recalcular totales desde la BD
+          await _calculateTotalsFromDB();
         });
   }
 
@@ -435,85 +532,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       if (!mounted) return;
       final msg = friendlySupabaseMessage(e, fallback: 'No se pudo eliminar');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
-  }
-
-  // Cambiar categoría de todos los registros
-  Future<void> _showBulkCategoryChangeDialog() async {
-    final preferenceProvider = PreferenceInheritedWidget.of(context);
-    final labels = preferenceProvider?.labels ??
-        InterfaceLabels(InterfacePreference.prestamista);
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cambiar categoría de todos'),
-        content: const Text(
-          '¿A qué categoría deseas cambiar todos los registros?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(null),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop('cobro'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-            ),
-            child: Text('Todo a ${labels.cobro}'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(ctx).pop('pago'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-            ),
-            child: Text('Todo a ${labels.pago}'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == null) return;
-
-    // Confirmar acción
-    final confirm = await _confirm(
-      'Confirmar cambio masivo',
-      '¿Estás seguro de cambiar TODOS los registros a tipo "$result"?\n\nEsta acción afectará ${_items.length} registro(s).',
-    );
-
-    if (confirm != true) return;
-
-    setState(() => _loading = true);
-    try {
-      if (_userId == null) throw Exception('No autorizado');
-
-      // Actualizar todos los registros
-      await _supabase
-          .from('payments')
-          .update({'type': result}).eq('user_id', _userId);
-
-      // Recargar datos
-      _page = 0;
-      _items.clear();
-      await _fetch();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Todos los registros cambiados a tipo "$result"'),
-          backgroundColor: Colors.green,
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      final msg = friendlySupabaseMessage(e,
-          fallback: 'Error al cambiar categoría masivamente');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(msg), backgroundColor: Colors.red),
-      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -926,12 +944,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         title: Text('Lista de ${labels.pagos} / ${labels.cobros}'),
         automaticallyImplyLeading: true,
         actions: [
-          // Botón para cambiar categoría de todos los registros
-          IconButton(
-            icon: const Icon(Icons.swap_horiz),
-            tooltip: 'Cambiar categoría de todos',
-            onPressed: _showBulkCategoryChangeDialog,
-          ),
           if (_profileName != null && _profileName!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
@@ -1479,14 +1491,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         break;
     }
 
-    // Recalculate totals usando currentAmount - SIEMPRE sobre TODOS los items
-    _totalCobros = _items
-        .where((p) => p.type == 'cobro')
-        .fold(0.0, (s, p) => s + p.currentAmount);
-    _totalPagos = _items
-        .where((p) => p.type == 'pago')
-        .fold(0.0, (s, p) => s + p.currentAmount);
-
+    // Los totales ya no se calculan aquí, se calculan desde la BD en _calculateTotalsFromDB
     _totalCount = _filteredItems.length;
 
     if (mounted) setState(() {});
