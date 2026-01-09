@@ -71,7 +71,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   bool _loading = false;
   bool _loadingMore = false;
   int _page = 0;
-  final int _pageSize = 50;
+  final int _pageSize = 10;
 
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
@@ -440,6 +440,85 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     }
   }
 
+  // Cambiar categoría de todos los registros
+  Future<void> _showBulkCategoryChangeDialog() async {
+    final preferenceProvider = PreferenceInheritedWidget.of(context);
+    final labels = preferenceProvider?.labels ??
+        InterfaceLabels(InterfacePreference.prestamista);
+
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cambiar categoría de todos'),
+        content: const Text(
+          '¿A qué categoría deseas cambiar todos los registros?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(null),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop('cobro'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+            ),
+            child: Text('Todo a ${labels.cobro}'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(ctx).pop('pago'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+            ),
+            child: Text('Todo a ${labels.pago}'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    // Confirmar acción
+    final confirm = await _confirm(
+      'Confirmar cambio masivo',
+      '¿Estás seguro de cambiar TODOS los registros a tipo "$result"?\n\nEsta acción afectará ${_items.length} registro(s).',
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _loading = true);
+    try {
+      if (_userId == null) throw Exception('No autorizado');
+
+      // Actualizar todos los registros
+      await _supabase
+          .from('payments')
+          .update({'type': result}).eq('user_id', _userId);
+
+      // Recargar datos
+      _page = 0;
+      _items.clear();
+      await _fetch();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Todos los registros cambiados a tipo "$result"'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      final msg = friendlySupabaseMessage(e,
+          fallback: 'Error al cambiar categoría masivamente');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(msg), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _logout() async {
     final ok = await _confirm(
         'Cerrar sesión', '¿Estás seguro que deseas cerrar sesión?');
@@ -475,6 +554,24 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
     double delta = 0.0;
     String? previewOp; // 'increment' or 'reduction'
     double previewFinal = p?.currentAmount ?? 0.0;
+    bool hasChanges = false;
+
+    // Función para detectar cambios
+    void checkForChanges() {
+      if (p == null) {
+        // Creación: verificar si hay datos
+        hasChanges = entityCtrl.text.trim().isNotEmpty ||
+            amountCtrl.text.trim().isNotEmpty ||
+            descriptionCtrl.text.trim().isNotEmpty;
+      } else {
+        // Edición: verificar si algo cambió
+        hasChanges = entityCtrl.text.trim() != (p.entity) ||
+            type != (p.type) ||
+            descriptionCtrl.text.trim() != (p.description ?? '') ||
+            (endDate?.toString() != p.endDate?.toString()) ||
+            previewOp != null;
+      }
+    }
 
     final result = await showDialog<bool>(
       context: context,
@@ -497,6 +594,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                     controller: entityCtrl,
                     decoration: const InputDecoration(
                         labelText: 'Nombre de la Entidad/Persona'),
+                    onChanged: (v) {
+                      checkForChanges();
+                      setStateDialog(() {});
+                    },
                     validator: (v) =>
                         (v == null || v.isEmpty) ? 'Ingresa un nombre' : null,
                   ),
@@ -528,6 +629,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                       // reset preview operation until user chooses increment/reduce
                       previewOp = null;
                       previewFinal = p?.currentAmount ?? 0.0;
+                      checkForChanges();
                       setStateDialog(() {});
                     },
                     validator: (v) {
@@ -561,6 +663,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                   previewOp = 'increment';
                                   delta = val;
                                   previewFinal = p.currentAmount + delta;
+                                  checkForChanges();
                                   setStateDialog(() {});
                                 },
                                 icon: const Icon(Icons.add),
@@ -583,6 +686,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                   delta = val;
                                   previewFinal = p.currentAmount - delta;
                                   if (previewFinal < 0) previewFinal = 0.0;
+                                  checkForChanges();
                                   setStateDialog(() {});
                                 },
                                 icon: const Icon(Icons.remove),
@@ -614,7 +718,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                           value: 'cobro', child: Text(labels.cobro)),
                       DropdownMenuItem(value: 'pago', child: Text(labels.pago)),
                     ],
-                    onChanged: (v) => type = v ?? 'cobro',
+                    onChanged: (v) {
+                      type = v ?? 'cobro';
+                      checkForChanges();
+                      setStateDialog(() {});
+                    },
                     decoration: const InputDecoration(labelText: 'Tipo'),
                   ),
                   const SizedBox(height: 8),
@@ -622,6 +730,10 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                     controller: descriptionCtrl,
                     decoration: const InputDecoration(labelText: 'Descripción'),
                     maxLines: 3,
+                    onChanged: (v) {
+                      checkForChanges();
+                      setStateDialog(() {});
+                    },
                   ),
                   const SizedBox(height: 8),
                   TextFormField(
@@ -639,6 +751,8 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                       if (picked != null) {
                         endDate = picked;
                         endDateCtrl.text = _formatDate(picked);
+                        checkForChanges();
+                        setStateDialog(() {});
                       }
                     },
                   ),
@@ -651,45 +765,54 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                 onPressed: () => Navigator.of(context).pop(false),
                 child: const Text('Cancelar')),
             ElevatedButton(
-              onPressed: () async {
-                if (!formKey.currentState!.validate()) return;
-                final entity = entityCtrl.text.trim();
-                final description = descriptionCtrl.text.trim();
+              onPressed: hasChanges
+                  ? () async {
+                      if (!formKey.currentState!.validate()) return;
+                      final entity = entityCtrl.text.trim();
+                      final description = descriptionCtrl.text.trim();
 
-                if (p == null) {
-                  // creation: amountCtrl holds absolute amount
-                  final amount = _parseAmountFromFormatted(amountCtrl.text);
-                  Navigator.of(context).pop(true);
-                  await _create(entity, amount, endDate, type, description);
-                  return;
-                }
+                      if (p == null) {
+                        // creation: amountCtrl holds absolute amount
+                        final amount =
+                            _parseAmountFromFormatted(amountCtrl.text);
+                        Navigator.of(context).pop(true);
+                        await _create(
+                            entity, amount, endDate, type, description);
+                        return;
+                      }
 
-                // edit: if there's a preview operation, create the movement first
-                if (previewOp != null && delta > 0) {
-                  try {
-                    await _supabase.from('payments_movements').insert({
-                      'payment_id': p.id,
-                      'user_id': _userId,
-                      'movement_type':
-                          previewOp == 'increment' ? 'increment' : 'reduction',
-                      'amount': delta,
-                      'note': previewOp == 'increment'
-                          ? 'Incremento manual'
-                          : 'Reducción manual',
-                      'created_at': DateTime.now().toIso8601String(),
-                    });
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-                        content: Text('Error al guardar el movimiento: $e')));
-                    return;
-                  }
-                }
+                      // edit: if there's a preview operation, create the movement first
+                      if (previewOp != null && delta > 0) {
+                        try {
+                          await _supabase.from('payments_movements').insert({
+                            'payment_id': p.id,
+                            'user_id': _userId,
+                            'movement_type': previewOp == 'increment'
+                                ? 'increment'
+                                : 'reduction',
+                            'amount': delta,
+                            'note': previewOp == 'increment'
+                                ? 'Incremento manual'
+                                : 'Reducción manual',
+                            'created_at': DateTime.now().toIso8601String(),
+                          });
+                        } catch (e) {
+                          if (!context.mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                              content:
+                                  Text('Error al guardar el movimiento: $e')));
+                          return;
+                        }
+                      }
 
-                if (!context.mounted) return;
-                Navigator.of(context).pop(true);
-                await _update(p.id, entity, endDate, type, description);
-              },
+                      if (!context.mounted) return;
+                      Navigator.of(context).pop(true);
+                      await _update(p.id, entity, endDate, type, description);
+                    }
+                  : null,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: hasChanges ? null : Colors.grey,
+              ),
               child: const Text('Guardar'),
             ),
           ],
@@ -803,6 +926,12 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         title: Text('Lista de ${labels.pagos} / ${labels.cobros}'),
         automaticallyImplyLeading: true,
         actions: [
+          // Botón para cambiar categoría de todos los registros
+          IconButton(
+            icon: const Icon(Icons.swap_horiz),
+            tooltip: 'Cambiar categoría de todos',
+            onPressed: _showBulkCategoryChangeDialog,
+          ),
           if (_profileName != null && _profileName!.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(right: 8.0),
