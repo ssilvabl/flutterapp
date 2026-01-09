@@ -15,7 +15,8 @@ class SubscriptionPage extends StatefulWidget {
   State<SubscriptionPage> createState() => _SubscriptionPageState();
 }
 
-class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBindingObserver {
+class _SubscriptionPageState extends State<SubscriptionPage>
+    with WidgetsBindingObserver {
   final _supabase = Supabase.instance.client;
   final _subscriptionService = SubscriptionService();
   final _mercadoPagoService = MercadoPagoService();
@@ -25,14 +26,16 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
   DateTime? _subscriptionStart;
   DateTime? _subscriptionEnd;
   bool _subscriptionCancelled = false; // Estado de renovación automática
-  String? _lastProcessedLink; // Para evitar procesar el mismo link múltiples veces
+  String?
+      _lastProcessedLink; // Para evitar procesar el mismo link múltiples veces
   DateTime? _lastPaymentAttempt; // Para trackear cuando se inició un pago
   bool _checkingPayment = false; // Para evitar verificaciones múltiples
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this); // Escuchar cambios de ciclo de vida
+    WidgetsBinding.instance
+        .addObserver(this); // Escuchar cambios de ciclo de vida
     _loadSubscriptionInfo();
     _initDeepLinks();
     // NO llamar _checkInitialLink() aquí para evitar procesar links antiguos
@@ -47,7 +50,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
-    
+
     if (state == AppLifecycleState.resumed) {
       print('📱 App resumed - Verificando si hay pago pendiente...');
       _checkPendingPayment();
@@ -56,47 +59,50 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
   Future<void> _checkPendingPayment() async {
     // Si hay un intento de pago reciente (últimos 5 minutos) y el rol es free
-    if (_lastPaymentAttempt != null && 
-        _role == 'free' && 
+    if (_lastPaymentAttempt != null &&
+        _role == 'free' &&
         !_checkingPayment &&
-        DateTime.now().difference(_lastPaymentAttempt!) < const Duration(minutes: 5)) {
-      
+        DateTime.now().difference(_lastPaymentAttempt!) <
+            const Duration(minutes: 5)) {
       setState(() => _checkingPayment = true);
       print('🔍 Verificando estado de pago automáticamente...');
-      
+
       try {
         // Esperar un momento para que Mercado Pago procese
         await Future.delayed(const Duration(seconds: 2));
-        
+
         // Verificar con Mercado Pago primero
         final userId = _supabase.auth.currentUser?.id;
         if (userId != null) {
-          final paymentVerified = await _mercadoPagoService.verifyRecentPayment(userId);
-          
+          final paymentVerified =
+              await _mercadoPagoService.verifyRecentPayment(userId);
+
           if (paymentVerified) {
             print('✅ Pago verificado automáticamente - Activando suscripción');
             await _subscriptionService.activateSubscription(userId);
             await _loadSubscriptionInfo();
-            
+
             _lastPaymentAttempt = null; // Limpiar el intento
-            
+
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(
-                content: Text('¡Pago verificado! Suscripción activada exitosamente 🎉'),
+                content: Text(
+                    '¡Pago verificado! Suscripción activada exitosamente 🎉'),
                 backgroundColor: Colors.green,
               ),
             );
             return; // Salir aquí si se verificó
           }
         }
-        
+
         // Si no se verificó automáticamente, recargar info y preguntar
         await _loadSubscriptionInfo();
-        
+
         // Si aún es free después de recargar, preguntar al usuario
         if (_role == 'free' && mounted) {
-          print('⚠️ Pago no verificado automáticamente - Preguntando al usuario');
+          print(
+              '⚠️ Pago no verificado automáticamente - Preguntando al usuario');
           _showPaymentConfirmationDialog();
         }
       } finally {
@@ -156,32 +162,34 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
         ),
       ),
     );
-    
+
     try {
       print('🔐 Verificando pago con Mercado Pago...');
       final userId = _supabase.auth.currentUser?.id;
       if (userId == null) {
         throw Exception('Usuario no autenticado');
       }
-      
+
       // Verificar con Mercado Pago si hay un pago aprobado reciente
-      final paymentVerified = await _mercadoPagoService.verifyRecentPayment(userId);
-      
+      final paymentVerified =
+          await _mercadoPagoService.verifyRecentPayment(userId);
+
       // Cerrar loading
       if (!mounted) return;
       Navigator.pop(context);
-      
+
       if (paymentVerified) {
         print('✅ Pago verificado - Activando suscripción');
         await _subscriptionService.activateSubscription(userId);
         await _loadSubscriptionInfo();
-        
+
         _lastPaymentAttempt = null; // Limpiar el intento
-        
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('¡Pago verificado! Suscripción activada exitosamente 🎉'),
+            content:
+                Text('¡Pago verificado! Suscripción activada exitosamente 🎉'),
             backgroundColor: Colors.green,
             duration: Duration(seconds: 3),
           ),
@@ -189,7 +197,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
       } else {
         print('❌ Pago no verificado');
         if (!mounted) return;
-        
+
         // Mostrar diálogo explicando la situación
         showDialog(
           context: context,
@@ -221,12 +229,12 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
       }
     } catch (e) {
       print('❌ Error al verificar/activar suscripción: $e');
-      
+
       // Cerrar loading si está abierto
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
-      
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -250,23 +258,23 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
   void _processDeepLink(Uri uri) {
     final linkString = uri.toString();
-    
+
     // Evitar procesar el mismo link múltiples veces
     if (_lastProcessedLink == linkString) {
       print('⚠️ Link ya procesado anteriormente, ignorando: $linkString');
       return;
     }
-    
+
     print('🔍 Procesando deep link: $linkString');
     print('   Path: ${uri.path}');
     print('   Query params: ${uri.queryParameters}');
-    
+
     // Marcar como procesado
     _lastProcessedLink = linkString;
-    
+
     // Normalizar el path (puede venir como /success o /payment/success)
     final path = uri.path.toLowerCase();
-    
+
     if (path.contains('success')) {
       print('✅ Pago exitoso detectado');
       _handlePaymentResponse(uri, success: true);
@@ -281,9 +289,10 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     }
   }
 
-  Future<void> _handlePaymentResponse(Uri uri, {bool success = false, bool pending = false}) async {
+  Future<void> _handlePaymentResponse(Uri uri,
+      {bool success = false, bool pending = false}) async {
     final userId = _supabase.auth.currentUser?.id ?? '';
-    
+
     print('🔔 _handlePaymentResponse llamado');
     print('   userId: $userId');
     print('   success: $success');
@@ -297,11 +306,11 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
         print('🚀 Iniciando activación de suscripción...');
         await _subscriptionService.activateSubscription(userId);
         print('✅ Suscripción activada en base de datos');
-        
+
         print('🔄 Recargando información de suscripción...');
         await _loadSubscriptionInfo();
         print('✅ Información recargada - Rol actual: $_role');
-        
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -323,7 +332,8 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     } else if (pending) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Pago pendiente de confirmación. Te notificaremos cuando se complete.'),
+          content: Text(
+              'Pago pendiente de confirmación. Te notificaremos cuando se complete.'),
           backgroundColor: Colors.orange,
           duration: Duration(seconds: 4),
         ),
@@ -348,10 +358,11 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
       final response = await _supabase
           .from('profiles')
-          .select('role, subscription_start, subscription_end, subscription_cancelled')
+          .select(
+              'role, subscription_start, subscription_end, subscription_cancelled')
           .eq('id', userId)
           .single();
-      
+
       print('📦 Respuesta de base de datos:');
       print('   role: ${response['role']}');
       print('   subscription_start: ${response['subscription_start']}');
@@ -360,10 +371,11 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
 
       setState(() {
         _role = response['role'] as String? ?? 'free';
-        _subscriptionCancelled = response['subscription_cancelled'] as bool? ?? false;
+        _subscriptionCancelled =
+            response['subscription_cancelled'] as bool? ?? false;
         final start = response['subscription_start'] as String?;
         final end = response['subscription_end'] as String?;
-        
+
         if (start != null) {
           _subscriptionStart = DateTime.parse(start);
         }
@@ -371,8 +383,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
           _subscriptionEnd = DateTime.parse(end);
         }
       });
-      
-      print('✅ Estado actualizado - Rol: $_role, Cancelada: $_subscriptionCancelled');
+
+      print(
+          '✅ Estado actualizado - Rol: $_role, Cancelada: $_subscriptionCancelled');
     } catch (e) {
       print('❌ Error al cargar información: $e');
       if (!mounted) return;
@@ -427,7 +440,8 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                 ),
                 if (isCurrent)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: color.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
@@ -454,20 +468,20 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
             ),
             const SizedBox(height: 16),
             ...benefits.map((benefit) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Row(
-                children: [
-                  Icon(Icons.check_circle, color: color, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      benefit,
-                      style: const TextStyle(fontSize: 14),
-                    ),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle, color: color, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          benefit,
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            )),
+                )),
           ],
         ),
       ),
@@ -575,7 +589,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
     try {
       final userId = _supabase.auth.currentUser?.id;
       final userEmail = _supabase.auth.currentUser?.email;
-      
+
       if (userId == null || userEmail == null) {
         throw Exception('Usuario no autenticado');
       }
@@ -586,10 +600,10 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
           .select('full_name, company')
           .eq('id', userId)
           .single();
-      
-      final userName = profileResponse['company'] ?? 
-                      profileResponse['full_name'] ?? 
-                      'Usuario';
+
+      final userName = profileResponse['company'] ??
+          profileResponse['full_name'] ??
+          'Usuario';
 
       // Crear preferencia de pago en Mercado Pago
       final checkoutUrl = await _mercadoPagoService.createPaymentPreference(
@@ -610,16 +624,17 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
           _lastPaymentAttempt = DateTime.now();
         });
         print('⏰ Marcando intento de pago: $_lastPaymentAttempt');
-        
+
         await launchUrl(
           uri,
           mode: LaunchMode.externalApplication,
         );
-        
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Completa el pago en Mercado Pago. Al regresar, verificaremos automáticamente tu suscripción.'),
+            content: Text(
+                'Completa el pago en Mercado Pago. Al regresar, verificaremos automáticamente tu suscripción.'),
             duration: Duration(seconds: 5),
             backgroundColor: Colors.blue,
           ),
@@ -632,9 +647,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
       if (mounted) {
         Navigator.of(context, rootNavigator: true).pop();
       }
-      
+
       if (!mounted) return;
-      
+
       // Mostrar error detallado
       String errorMessage = 'Error al procesar el pago';
       if (e.toString().contains('Mercado Pago')) {
@@ -644,7 +659,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
       } else {
         errorMessage = 'Error: ${e.toString()}';
       }
-      
+
       showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
@@ -778,12 +793,14 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Suscripción cancelada. Seguirá activa hasta la fecha de vencimiento.'),
+          content: Text(
+              'Suscripción cancelada. Seguirá activa hasta la fecha de vencimiento.'),
         ),
       );
     } catch (e) {
       if (!mounted) return;
-      final msg = friendlySupabaseMessage(e, fallback: 'Error al cancelar suscripción');
+      final msg =
+          friendlySupabaseMessage(e, fallback: 'Error al cancelar suscripción');
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     }
   }
@@ -837,15 +854,18 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                             fontWeight: FontWeight.bold,
                           ),
                         ),
-                        if (_role == 'premium' && _subscriptionStart != null) ...[
+                        if (_role == 'premium' &&
+                            _subscriptionStart != null) ...[
                           const SizedBox(height: 16),
                           Row(
                             children: [
-                              const Icon(Icons.calendar_today, color: Colors.white70, size: 16),
+                              const Icon(Icons.calendar_today,
+                                  color: Colors.white70, size: 16),
                               const SizedBox(width: 8),
                               Text(
                                 'Inicio: ${DateFormat('dd/MM/yyyy').format(_subscriptionStart!)}',
-                                style: const TextStyle(color: Colors.white70, fontSize: 14),
+                                style: const TextStyle(
+                                    color: Colors.white70, fontSize: 14),
                               ),
                             ],
                           ),
@@ -853,11 +873,13 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                           if (_subscriptionEnd != null)
                             Row(
                               children: [
-                                const Icon(Icons.event, color: Colors.white70, size: 16),
+                                const Icon(Icons.event,
+                                    color: Colors.white70, size: 16),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Vence: ${DateFormat('dd/MM/yyyy').format(_subscriptionEnd!)}',
-                                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                                  style: const TextStyle(
+                                      color: Colors.white70, fontSize: 14),
                                 ),
                               ],
                             ),
@@ -881,11 +903,13 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                                     ),
                                     const SizedBox(height: 4),
                                     Text(
-                                      _subscriptionCancelled 
-                                        ? 'Desactivada - Suscripción activa hasta el vencimiento'
-                                        : 'Activa - Se renovará automáticamente',
+                                      _subscriptionCancelled
+                                          ? 'Desactivada - Suscripción activa hasta el vencimiento'
+                                          : 'Activa - Se renovará automáticamente',
                                       style: TextStyle(
-                                        color: _subscriptionCancelled ? Colors.orange : Colors.green.shade300,
+                                        color: _subscriptionCancelled
+                                            ? Colors.orange
+                                            : Colors.green.shade300,
                                         fontSize: 12,
                                       ),
                                     ),
@@ -894,7 +918,8 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                               ),
                               Switch(
                                 value: !_subscriptionCancelled,
-                                onChanged: (value) => _handleToggleAutoRenewal(value),
+                                onChanged: (value) =>
+                                    _handleToggleAutoRenewal(value),
                                 activeColor: Colors.green,
                                 inactiveThumbColor: Colors.orange,
                               ),
@@ -913,7 +938,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                     ),
                   ),
                   const SizedBox(height: 16),
-                  
+
                   // Plan Free
                   _buildPlanCard(
                     title: 'Free',
@@ -926,7 +951,7 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                     color: Colors.grey,
                     isCurrent: _role == 'free',
                   ),
-                  
+
                   // Plan Premium
                   _buildPlanCard(
                     title: 'Premium',
@@ -940,9 +965,9 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                     color: Colors.amber.shade700,
                     isCurrent: _role == 'premium',
                   ),
-                  
+
                   const SizedBox(height: 16),
-                  
+
                   // Botón de acción
                   if (_role == 'free')
                     // Usuario Free - Mostrar botón para suscribirse
@@ -971,7 +996,8 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                     // Usuario Premium - Verificar si está expirado o próximo a expirar
                     Column(
                       children: [
-                        if (_subscriptionEnd != null && _subscriptionEnd!.isBefore(DateTime.now()))
+                        if (_subscriptionEnd != null &&
+                            _subscriptionEnd!.isBefore(DateTime.now()))
                           // Suscripción expirada - Mostrar botón para renovar
                           SizedBox(
                             width: double.infinity,
@@ -994,75 +1020,36 @@ class _SubscriptionPageState extends State<SubscriptionPage> with WidgetsBinding
                               ),
                             ),
                           )
-                        else if (_subscriptionEnd != null && _subscriptionEnd!.difference(DateTime.now()).inDays <= 7)
-                          // Próximo a expirar (7 días o menos) - Mostrar botón de renovación anticipada
-                          Column(
-                            children: [
-                              if (!_subscriptionCancelled)
-                                OutlinedButton(
-                                  onPressed: _handleCancelSubscription,
-                                  style: OutlinedButton.styleFrom(
-                                    foregroundColor: Colors.red,
-                                    side: const BorderSide(color: Colors.red, width: 2),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: const Text(
-                                    'Cancelar Suscripción',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              const SizedBox(height: 12),
-                              SizedBox(
-                                width: double.infinity,
-                                height: 50,
-                                child: ElevatedButton(
-                                  onPressed: _handleSubscribe,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                    foregroundColor: Colors.white,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                  ),
-                                  child: const Text(
-                                    'Renovar Ahora - \$25.000 COP',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          )
-                        else if (!_subscriptionCancelled)
-                          // Suscripción activa - Solo mostrar cancelar
+                        else if (_subscriptionEnd != null &&
+                            _subscriptionEnd!
+                                    .difference(DateTime.now())
+                                    .inDays <=
+                                7)
+                          // Próximo a expirar (7 días o menos) - Mostrar solo botón de renovación
                           SizedBox(
                             width: double.infinity,
                             height: 50,
-                            child: OutlinedButton(
-                              onPressed: _handleCancelSubscription,
-                              style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.red,
-                                side: const BorderSide(color: Colors.red, width: 2),
+                            child: ElevatedButton(
+                              onPressed: _handleSubscribe,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue,
+                                foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
                                   borderRadius: BorderRadius.circular(12),
                                 ),
                               ),
                               child: const Text(
-                                'Cancelar Suscripción',
+                                'Renovar Ahora - \$25.000 COP',
                                 style: TextStyle(
                                   fontSize: 16,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
-                          ),
+                          )
+                        else
+                          // Suscripción activa - No mostrar botones
+                          const SizedBox.shrink(),
                       ],
                     ),
                 ],

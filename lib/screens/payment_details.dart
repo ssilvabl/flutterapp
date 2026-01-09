@@ -669,130 +669,129 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
-              style:
-                  const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(
-              'Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
-          if ((widget.payment['endDate'] is DateTime
-                  ? widget.payment['endDate'] as DateTime
-                  : DateTime.tryParse(
-                      widget.payment['end_date']?.toString() ?? '')) !=
-              null)
+      body: RefreshIndicator(
+        onRefresh: _loadMovements,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.all(16),
+          child:
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
+                style:
+                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
             Text(
-                'Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
-          const SizedBox(height: 12),
-          Text('Descripción: ${widget.payment['description'] ?? 'N/A'}'),
-          const SizedBox(height: 16),
-          Row(children: [
-            ElevatedButton.icon(
-                onPressed: _loadMovements,
-                icon: const Icon(Icons.refresh),
-                label: const Text('Actualizar')),
-          ]),
-          const SizedBox(height: 8),
-          const Text('Historial de Movimientos',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          _loading
-              ? const Center(child: CircularProgressIndicator())
-              : Expanded(
-                  child: _moves.isEmpty
-                      ? const Text('Sin movimientos')
-                      : ListView.separated(
-                          itemCount: _moves.length,
-                          separatorBuilder: (_, __) => const Divider(),
-                          itemBuilder: (context, index) {
-                            final m = _moves[index];
-                            final tipo = m.movementType == 'initial'
-                                ? 'Inicial'
-                                : m.movementType == 'increment'
-                                    ? 'Incremento'
-                                    : m.movementType == 'reduction'
-                                        ? 'Reducción'
-                                        : m.movementType;
+                'Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
+            if ((widget.payment['endDate'] is DateTime
+                    ? widget.payment['endDate'] as DateTime
+                    : DateTime.tryParse(
+                        widget.payment['end_date']?.toString() ?? '')) !=
+                null)
+              Text(
+                  'Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
+            const SizedBox(height: 12),
+            Text('Descripción: ${widget.payment['description'] ?? 'N/A'}'),
+            const SizedBox(height: 16),
+            const Text('Historial de Movimientos',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _moves.isEmpty
+                    ? const Text('Sin movimientos')
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _moves.length,
+                        separatorBuilder: (_, __) => const Divider(),
+                        itemBuilder: (context, index) {
+                          final m = _moves[index];
+                          final tipo = m.movementType == 'initial'
+                              ? 'Inicial'
+                              : m.movementType == 'increment'
+                                  ? 'Incremento'
+                                  : m.movementType == 'reduction'
+                                      ? 'Reducción'
+                                      : m.movementType;
 
-                            // Definir color según el tipo de movimiento
-                            Color amountColor;
-                            Color? tileColor;
-                            if (m.movementType == 'increment') {
-                              amountColor = Colors.green.shade700;
-                              tileColor = Colors.green.shade50;
-                            } else if (m.movementType == 'reduction') {
-                              amountColor = Colors.red.shade700;
-                              tileColor = Colors.red.shade50;
-                            } else {
-                              // inicial
-                              amountColor = Colors.blue.shade700;
-                              tileColor = Colors.blue.shade50;
-                            }
+                          // Definir color según el tipo de movimiento
+                          Color amountColor;
+                          Color? tileColor;
+                          if (m.movementType == 'increment') {
+                            amountColor = Colors.green.shade700;
+                            tileColor = Colors.green.shade50;
+                          } else if (m.movementType == 'reduction') {
+                            amountColor = Colors.red.shade700;
+                            tileColor = Colors.red.shade50;
+                          } else {
+                            // inicial
+                            amountColor = Colors.blue.shade700;
+                            tileColor = Colors.blue.shade50;
+                          }
 
-                            return ListTile(
-                              tileColor: tileColor,
-                              title: Text(
-                                tipo,
-                                style: TextStyle(
-                                  fontWeight: FontWeight.w500,
-                                  color: amountColor,
+                          return ListTile(
+                            tileColor: tileColor,
+                            title: Text(
+                              tipo,
+                              style: TextStyle(
+                                fontWeight: FontWeight.w500,
+                                color: amountColor,
+                              ),
+                            ),
+                            subtitle: Text(_formatDate(m.createdAt)),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '\$${_formatAmount(m.amount)}',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: amountColor,
+                                  ),
                                 ),
-                              ),
-                              subtitle: Text(_formatDate(m.createdAt)),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Text(
-                                    '\$${_formatAmount(m.amount)}',
-                                    style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      color: amountColor,
+                                const SizedBox(width: 8),
+                                PopupMenuButton<String>(
+                                  icon: const Icon(Icons.more_vert, size: 20),
+                                  onSelected: (value) {
+                                    if (value == 'edit') {
+                                      _editMovement(m);
+                                    } else if (value == 'delete') {
+                                      _confirmDeleteMovement(m);
+                                    }
+                                  },
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit, size: 20),
+                                          SizedBox(width: 8),
+                                          Text('Editar'),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  PopupMenuButton<String>(
-                                    icon: const Icon(Icons.more_vert, size: 20),
-                                    onSelected: (value) {
-                                      if (value == 'edit') {
-                                        _editMovement(m);
-                                      } else if (value == 'delete') {
-                                        _confirmDeleteMovement(m);
-                                      }
-                                    },
-                                    itemBuilder: (context) => [
-                                      const PopupMenuItem(
-                                        value: 'edit',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.edit, size: 20),
-                                            SizedBox(width: 8),
-                                            Text('Editar'),
-                                          ],
-                                        ),
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.delete,
+                                              size: 20, color: Colors.red),
+                                          SizedBox(width: 8),
+                                          Text('Eliminar',
+                                              style:
+                                                  TextStyle(color: Colors.red)),
+                                        ],
                                       ),
-                                      const PopupMenuItem(
-                                        value: 'delete',
-                                        child: Row(
-                                          children: [
-                                            Icon(Icons.delete,
-                                                size: 20, color: Colors.red),
-                                            SizedBox(width: 8),
-                                            Text('Eliminar',
-                                                style: TextStyle(
-                                                    color: Colors.red)),
-                                          ],
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            );
-                          })),
-        ]),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                          );
+                        }),
+          ]),
+        ),
       ),
     );
   }

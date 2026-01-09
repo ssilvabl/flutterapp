@@ -1292,11 +1292,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         break;
     }
 
-    // Recalculate totals usando currentAmount
-    _totalCobros = _filteredItems
+    // Recalculate totals usando currentAmount - SIEMPRE sobre TODOS los items
+    _totalCobros = _items
         .where((p) => p.type == 'cobro')
         .fold(0.0, (s, p) => s + p.currentAmount);
-    _totalPagos = _filteredItems
+    _totalPagos = _items
         .where((p) => p.type == 'pago')
         .fold(0.0, (s, p) => s + p.currentAmount);
 
