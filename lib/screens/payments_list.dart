@@ -259,15 +259,41 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           if (!mounted) return;
           print('🔄 Actualización en tiempo real: ${data.length} registros');
 
-          // Convertir datos y calcular montos actuales
-          final payments = data.map((e) => Payment.fromMap(e)).toList();
-          await _calculateCurrentAmounts(payments);
+          // Convertir datos recibidos
+          final newPayments = data.map((e) => Payment.fromMap(e)).toList();
+          
+          // Actualizar solo los items que ya tenemos cargados (mantener paginación)
+          final updatedItems = <Payment>[];
+          bool hasChanges = false;
+          
+          for (final item in _items) {
+            final updated = newPayments.firstWhere(
+              (p) => p.id == item.id,
+              orElse: () => item,
+            );
+            
+            // Verificar si cambió
+            if (updated.entity != item.entity || 
+                updated.amount != item.amount ||
+                updated.type != item.type) {
+              hasChanges = true;
+            }
+            
+            updatedItems.add(updated);
+          }
+          
+          // Solo actualizar si hubo cambios reales
+          if (hasChanges) {
+            // Calcular montos actuales
+            await _calculateCurrentAmounts(updatedItems);
 
-          setState(() {
-            _items = payments;
-          });
-          _applyFilter();
-          // Recalcular totales desde la BD
+            setState(() {
+              _items = updatedItems;
+            });
+            _applyFilter();
+          }
+          
+          // SIEMPRE recalcular totales desde la BD (incluye todos los registros)
           await _calculateTotalsFromDB();
         });
 
@@ -280,11 +306,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           if (!mounted) return;
           print('📊 Actualización de movimientos en tiempo real');
 
-          // Recalcular montos actuales de todos los pagos
+          // Recalcular montos actuales de los pagos cargados
           await _calculateCurrentAmounts(_items);
           setState(() {});
           _applyFilter();
-          // Recalcular totales desde la BD
+          // Recalcular totales desde la BD (todos los registros)
           await _calculateTotalsFromDB();
         });
   }
@@ -380,13 +406,16 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         }
       }
 
-      // Obtener registros paginados
-      final res = await _supabase
+      // Obtener registros paginados con ordenamiento según preferencia
+      var query = _supabase
           .from('payments')
           .select()
-          .eq('user_id', _userId)
-          .order('created_at', ascending: false)
-          .range(from, from + _pageSize - 1);
+          .eq('user_id', _userId);
+      
+      // Aplicar ordenamiento del servidor
+      query = _applySortOrderToQuery(query);
+      
+      final res = await query.range(from, from + _pageSize - 1);
 
       final List<Map<String, dynamic>> data = (res is List)
           ? List<Map<String, dynamic>>.from(res)
@@ -887,6 +916,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             content: Text(type == 'cobro'
                 ? '${labels.cobro} agregado'
                 : '${labels.pago} agregado')));
+        
+        // Recalcular totales inmediatamente
+        await _calculateTotalsFromDB();
       }
     } catch (e) {
       if (!mounted) return;
@@ -922,6 +954,9 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             content: Text(type == 'cobro'
                 ? '${labels.cobro} actualizado'
                 : '${labels.pago} actualizado')));
+        
+        // Recalcular totales inmediatamente
+        await _calculateTotalsFromDB();
       }
     } catch (e) {
       if (!mounted) return;
@@ -1433,18 +1468,24 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   Future<void> _applyFilter() async {
     final q = _searchController.text.trim();
 
-    // If there's a search query, perform server-side search
+    // If there's a search query, perform server-side search with ordering
     if (q.isNotEmpty) {
       try {
         if (_userId == null) return;
         setState(() => _loading = true);
         final escaped = q.replaceAll('%', '\\%');
-        final res = await _supabase
+        
+        // Build query with ordering from server
+        var query = _supabase
             .from('payments')
             .select()
             .or("entity_name.ilike.%$escaped%,description.ilike.%$escaped%")
-            .eq('user_id', _userId)
-            .order('created_at', ascending: false);
+            .eq('user_id', _userId);
+        
+        // Apply server-side ordering for better performance
+        query = _applySortOrderToQuery(query);
+        
+        final res = await query;
         final List<Map<String, dynamic>> data = (res is List)
             ? List<Map<String, dynamic>>.from(res)
             : <Map<String, dynamic>>[];
@@ -1469,7 +1510,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
           _filteredItems.where((p) => p.type == _filterType).toList();
     }
 
-    // Apply sort order
+    // Apply sort order (client-side for loaded items)
     switch (_sortOrder) {
       case 'date_desc':
         _filteredItems.sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -1491,10 +1532,28 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         break;
     }
 
-    // Los totales ya no se calculan aquí, se calculan desde la BD en _calculateTotalsFromDB
+    // Los totales se calculan desde la BD en _calculateTotalsFromDB (todos los registros)
     _totalCount = _filteredItems.length;
 
     if (mounted) setState(() {});
+  }
+
+  // Helper para aplicar ordenamiento en consultas al servidor
+  dynamic _applySortOrderToQuery(dynamic query) {
+    switch (_sortOrder) {
+      case 'date_desc':
+        return query.order('created_at', ascending: false);
+      case 'date_asc':
+        return query.order('created_at', ascending: true);
+      case 'alpha':
+        return query.order('entity_name', ascending: true);
+      case 'amount_desc':
+        return query.order('amount', ascending: false);
+      case 'amount_asc':
+        return query.order('amount', ascending: true);
+      default:
+        return query.order('created_at', ascending: false);
+    }
   }
 
   Widget _buildTopControls(bool wide, double maxWidth, InterfaceLabels labels) {
