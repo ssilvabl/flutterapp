@@ -89,8 +89,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
   String? _profileName;
   UserRole _userRole = UserRole.free;
   bool _canAddTransactions = true;
-  int _currentTransactionCount = 0;
-  int? _maxTransactions;
   Timer? _sessionCheckTimer;
 
   // Removemos estas variables ya que usaremos el provider
@@ -261,27 +259,27 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
           // Convertir datos recibidos
           final newPayments = data.map((e) => Payment.fromMap(e)).toList();
-          
+
           // Actualizar solo los items que ya tenemos cargados (mantener paginación)
           final updatedItems = <Payment>[];
           bool hasChanges = false;
-          
+
           for (final item in _items) {
             final updated = newPayments.firstWhere(
               (p) => p.id == item.id,
               orElse: () => item,
             );
-            
+
             // Verificar si cambió
-            if (updated.entity != item.entity || 
+            if (updated.entity != item.entity ||
                 updated.amount != item.amount ||
                 updated.type != item.type) {
               hasChanges = true;
             }
-            
+
             updatedItems.add(updated);
           }
-          
+
           // Solo actualizar si hubo cambios reales
           if (hasChanges) {
             // Calcular montos actuales
@@ -292,7 +290,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             });
             _applyFilter();
           }
-          
+
           // SIEMPRE recalcular totales desde la BD (incluye todos los registros)
           await _calculateTotalsFromDB();
         });
@@ -407,14 +405,11 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
       }
 
       // Obtener registros paginados con ordenamiento según preferencia
-      var query = _supabase
-          .from('payments')
-          .select()
-          .eq('user_id', _userId);
-      
+      var query = _supabase.from('payments').select().eq('user_id', _userId);
+
       // Aplicar ordenamiento del servidor
       query = _applySortOrderToQuery(query);
-      
+
       final res = await query.range(from, from + _pageSize - 1);
 
       final List<Map<String, dynamic>> data = (res is List)
@@ -495,8 +490,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
 
       setState(() {
         _canAddTransactions = limitResult.canAdd;
-        _currentTransactionCount = limitResult.currentCount;
-        _maxTransactions = limitResult.maxCount;
       });
     } catch (e) {
       print('Error checking transaction limit: $e');
@@ -916,7 +909,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             content: Text(type == 'cobro'
                 ? '${labels.cobro} agregado'
                 : '${labels.pago} agregado')));
-        
+
         // Recalcular totales inmediatamente
         await _calculateTotalsFromDB();
       }
@@ -954,7 +947,7 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
             content: Text(type == 'cobro'
                 ? '${labels.cobro} actualizado'
                 : '${labels.pago} actualizado')));
-        
+
         // Recalcular totales inmediatamente
         await _calculateTotalsFromDB();
       }
@@ -1119,37 +1112,6 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
                                   },
                                   child: Row(
                                     children: [
-                                      // Número de registro
-                                      Container(
-                                        width: 40,
-                                        height: 40,
-                                        margin: const EdgeInsets.only(right: 8),
-                                        decoration: BoxDecoration(
-                                          color: it.type == 'cobro'
-                                              ? Colors.green.withOpacity(0.2)
-                                              : Colors.red.withOpacity(0.2),
-                                          borderRadius:
-                                              BorderRadius.circular(8),
-                                          border: Border.all(
-                                            color: it.type == 'cobro'
-                                                ? Colors.green
-                                                : Colors.red,
-                                            width: 2,
-                                          ),
-                                        ),
-                                        child: Center(
-                                          child: Text(
-                                            '#${index + 1}',
-                                            style: TextStyle(
-                                              color: it.type == 'cobro'
-                                                  ? Colors.green
-                                                  : Colors.red,
-                                              fontWeight: FontWeight.bold,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
                                       Expanded(
                                         child: Container(
                                           padding: const EdgeInsets.symmetric(
@@ -1474,17 +1436,17 @@ class _PaymentsListPageState extends State<PaymentsListPage> {
         if (_userId == null) return;
         setState(() => _loading = true);
         final escaped = q.replaceAll('%', '\\%');
-        
+
         // Build query with ordering from server
         var query = _supabase
             .from('payments')
             .select()
             .or("entity_name.ilike.%$escaped%,description.ilike.%$escaped%")
             .eq('user_id', _userId);
-        
+
         // Apply server-side ordering for better performance
         query = _applySortOrderToQuery(query);
-        
+
         final res = await query;
         final List<Map<String, dynamic>> data = (res is List)
             ? List<Map<String, dynamic>>.from(res)

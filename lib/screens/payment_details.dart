@@ -671,11 +671,19 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
       ),
       body: RefreshIndicator(
         onRefresh: _loadMovements,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          child:
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
             Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
                 style:
                     const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
@@ -751,46 +759,21 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                                   ),
                                 ),
                                 const SizedBox(width: 8),
-                                PopupMenuButton<String>(
-                                  icon: const Icon(Icons.more_vert, size: 20),
-                                  onSelected: (value) {
-                                    if (value == 'edit') {
-                                      _editMovement(m);
-                                    } else if (value == 'delete') {
-                                      _confirmDeleteMovement(m);
-                                    }
-                                  },
-                                  itemBuilder: (context) => [
-                                    const PopupMenuItem(
-                                      value: 'edit',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.edit, size: 20),
-                                          SizedBox(width: 8),
-                                          Text('Editar'),
-                                        ],
-                                      ),
-                                    ),
-                                    const PopupMenuItem(
-                                      value: 'delete',
-                                      child: Row(
-                                        children: [
-                                          Icon(Icons.delete,
-                                              size: 20, color: Colors.red),
-                                          SizedBox(width: 8),
-                                          Text('Eliminar',
-                                              style:
-                                                  TextStyle(color: Colors.red)),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
+                                  onPressed: () => _confirmDeleteMovement(m),
+                                  tooltip: 'Eliminar',
                                 ),
                               ],
                             ),
                           );
                         }),
-          ]),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

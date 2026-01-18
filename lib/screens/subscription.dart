@@ -883,48 +883,7 @@ class _SubscriptionPageState extends State<SubscriptionPage>
                                 ),
                               ],
                             ),
-                          const SizedBox(height: 16),
-                          const Divider(color: Colors.white24, height: 1),
-                          const SizedBox(height: 16),
-                          // Switch de renovación automática
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      'Renovación automática',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 15,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      _subscriptionCancelled
-                                          ? 'Desactivada - Suscripción activa hasta el vencimiento'
-                                          : 'Activa - Se renovará automáticamente',
-                                      style: TextStyle(
-                                        color: _subscriptionCancelled
-                                            ? Colors.orange
-                                            : Colors.green.shade300,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              Switch(
-                                value: !_subscriptionCancelled,
-                                onChanged: (value) =>
-                                    _handleToggleAutoRenewal(value),
-                                activeColor: Colors.green,
-                                inactiveThumbColor: Colors.orange,
-                              ),
-                            ],
-                          ),
+
                         ],
                       ],
                     ),

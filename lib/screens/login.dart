@@ -282,10 +282,12 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       obscureText: true,
                       validator: (v) {
-                        if (v == null || v.isEmpty)
+                        if (v == null || v.isEmpty) {
                           return 'Ingresa una contraseña';
-                        if (v.length < 6)
+                        }
+                        if (v.length < 6) {
                           return 'La contraseña debe tener al menos 6 caracteres';
+                        }
                         return null;
                       },
                     ),

@@ -3,9 +3,9 @@ class MercadoPagoConfig {
   // MODO DE PRUEBA: true = activa suscripción sin pagar, false = usa Mercado Pago
   static const bool demoMode = false;
   
-  // Credenciales de Mercado Pago - Checkout Pro
-  static const String publicKey = 'APP_USR-17d55c5f-9950-41d8-adc3-2a94eb79b913';
-  static const String accessToken = 'APP_USR-590060161349995-010300-f404f4724550fbe2e8a4ce718cedaef7-1339969997';
+  // Credenciales de Mercado Pago - PRODUCCIÓN
+  static const String publicKey = 'APP_USR-1fecee2f-d4d3-4042-8acf-bed9ecca12e8';
+  static const String accessToken = 'APP_USR-144222439625427-010300-5fca498f485a021a8ef6d2c5d9392b7f-1330332632';
   
   // Configuración del producto
   static const String subscriptionName = 'Suscripción Premium Sepagos - 30 días';
