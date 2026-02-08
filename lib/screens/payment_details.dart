@@ -138,11 +138,11 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
     final greenColor = PdfColor.fromHex('#16a34a');
 
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(32),
-        build: (pw.Context ctx) => pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.start,
-          children: [
+        build: (pw.Context ctx) {
+          return [
             // Encabezado azul
             pw.Container(
               width: double.infinity,
@@ -370,8 +370,8 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                 ],
               ),
             ),
-          ],
-        ),
+          ];
+        },
       ),
     );
 
@@ -684,90 +684,98 @@ class _PaymentDetailsPageState extends State<PaymentDetailsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-            Text('Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
-                style:
-                    const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Text(
-                'Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
-            if ((widget.payment['endDate'] is DateTime
-                    ? widget.payment['endDate'] as DateTime
-                    : DateTime.tryParse(
-                        widget.payment['end_date']?.toString() ?? '')) !=
-                null)
-              Text(
-                  'Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
-            const SizedBox(height: 12),
-            Text('Descripción: ${widget.payment['description'] ?? 'N/A'}'),
-            const SizedBox(height: 16),
-            const Text('Historial de Movimientos',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _moves.isEmpty
-                    ? const Text('Sin movimientos')
-                    : ListView.separated(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _moves.length,
-                        separatorBuilder: (_, __) => const Divider(),
-                        itemBuilder: (context, index) {
-                          final m = _moves[index];
-                          final tipo = m.movementType == 'initial'
-                              ? 'Inicial'
-                              : m.movementType == 'increment'
-                                  ? 'Incremento'
-                                  : m.movementType == 'reduction'
-                                      ? 'Reducción'
-                                      : m.movementType;
+                      Text(
+                          'Monto Actual: \$${_formatAmount(_calculateCurrentAmount())}',
+                          style: const TextStyle(
+                              fontSize: 20, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      Text(
+                          'Fecha Inicio: ${_formatDate(widget.payment['createdAt'] is DateTime ? widget.payment['createdAt'] as DateTime : DateTime.tryParse(widget.payment['created_at']?.toString() ?? '') ?? DateTime.now())}'),
+                      if ((widget.payment['endDate'] is DateTime
+                              ? widget.payment['endDate'] as DateTime
+                              : DateTime.tryParse(
+                                  widget.payment['end_date']?.toString() ??
+                                      '')) !=
+                          null)
+                        Text(
+                            'Fecha Fin: ${_formatDate(widget.payment['endDate'] is DateTime ? widget.payment['endDate'] as DateTime : DateTime.tryParse(widget.payment['end_date']?.toString() ?? '')!)}'),
+                      const SizedBox(height: 12),
+                      Text(
+                          'Descripción: ${widget.payment['description'] ?? 'N/A'}'),
+                      const SizedBox(height: 16),
+                      const Text('Historial de Movimientos',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      _loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _moves.isEmpty
+                              ? const Text('Sin movimientos')
+                              : ListView.separated(
+                                  shrinkWrap: true,
+                                  physics: const NeverScrollableScrollPhysics(),
+                                  itemCount: _moves.length,
+                                  separatorBuilder: (_, __) => const Divider(),
+                                  itemBuilder: (context, index) {
+                                    final m = _moves[index];
+                                    final tipo = m.movementType == 'initial'
+                                        ? 'Inicial'
+                                        : m.movementType == 'increment'
+                                            ? 'Incremento'
+                                            : m.movementType == 'reduction'
+                                                ? 'Reducción'
+                                                : m.movementType;
 
-                          // Definir color según el tipo de movimiento
-                          Color amountColor;
-                          Color? tileColor;
-                          if (m.movementType == 'increment') {
-                            amountColor = Colors.green.shade700;
-                            tileColor = Colors.green.shade50;
-                          } else if (m.movementType == 'reduction') {
-                            amountColor = Colors.red.shade700;
-                            tileColor = Colors.red.shade50;
-                          } else {
-                            // inicial
-                            amountColor = Colors.blue.shade700;
-                            tileColor = Colors.blue.shade50;
-                          }
+                                    // Definir color según el tipo de movimiento
+                                    Color amountColor;
+                                    Color? tileColor;
+                                    if (m.movementType == 'increment') {
+                                      amountColor = Colors.green.shade700;
+                                      tileColor = Colors.green.shade50;
+                                    } else if (m.movementType == 'reduction') {
+                                      amountColor = Colors.red.shade700;
+                                      tileColor = Colors.red.shade50;
+                                    } else {
+                                      // inicial
+                                      amountColor = Colors.blue.shade700;
+                                      tileColor = Colors.blue.shade50;
+                                    }
 
-                          return ListTile(
-                            tileColor: tileColor,
-                            title: Text(
-                              tipo,
-                              style: TextStyle(
-                                fontWeight: FontWeight.w500,
-                                color: amountColor,
-                              ),
-                            ),
-                            subtitle: Text(_formatDate(m.createdAt)),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  '\$${_formatAmount(m.amount)}',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 16,
-                                    color: amountColor,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                IconButton(
-                                  icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                                  onPressed: () => _confirmDeleteMovement(m),
-                                  tooltip: 'Eliminar',
-                                ),
-                              ],
-                            ),
-                          );
-                        }),
+                                    return ListTile(
+                                      tileColor: tileColor,
+                                      title: Text(
+                                        tipo,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w500,
+                                          color: amountColor,
+                                        ),
+                                      ),
+                                      subtitle: Text(_formatDate(m.createdAt)),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            '\$${_formatAmount(m.amount)}',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 16,
+                                              color: amountColor,
+                                            ),
+                                          ),
+                                          const SizedBox(width: 8),
+                                          IconButton(
+                                            icon: const Icon(
+                                                Icons.delete_outline,
+                                                size: 20,
+                                                color: Colors.red),
+                                            onPressed: () =>
+                                                _confirmDeleteMovement(m),
+                                            tooltip: 'Eliminar',
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                  }),
                     ],
                   ),
                 ),
